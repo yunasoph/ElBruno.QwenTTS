@@ -11,6 +11,7 @@ How to decide who handles what.
 | Architecture, scope, decisions | Morpheus | Model selection, pipeline design, ONNX export strategy |
 | Python, ML, ONNX export | Trinity | PyTorch model analysis, ONNX conversion, tokenizer export |
 | C#, .NET, ONNX Runtime | Neo | Console app, ONNX inference, BPE tokenizer in C# |
+| Issue ops, triage, labeling, closure | Link | Issue triage, resolution comments, labeling, hygiene, cross-referencing |
 | Code review | Morpheus | Review PRs, check quality, architecture alignment |
 | Testing, validation | Tank | Parity tests, edge cases, cross-language validation |
 | Scope & priorities | Morpheus | What to build next, trade-offs, decisions |

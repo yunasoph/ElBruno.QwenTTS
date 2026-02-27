@@ -18,6 +18,7 @@
 | Switch | Issue Solver | `.squad/agents/switch/charter.md` | ✅ Active |
 | Cypher | Release Manager | `.squad/agents/cypher/charter.md` | ✅ Active |
 | Tank | Tester | `.squad/agents/tank/charter.md` | ✅ Active |
+| Link | Issue Ops | `.squad/agents/link/charter.md` | ✅ Active |
 | Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Silent |
 | Ralph | Work Monitor | — | 🔄 Monitor |
 
