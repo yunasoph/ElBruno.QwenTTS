@@ -180,6 +180,10 @@ Please open an issue first for major changes or new features to discuss the appr
 
 ---
 
+## Related Projects
+
+- [**ElBruno.PersonaPlex**](https://github.com/elbruno/ElBruno.PersonaPlex) — NVIDIA PersonaPlex-7B full-duplex speech-to-speech for local C# inference via ONNX Runtime. Pre-exported ONNX models: [elbruno/personaplex-7b-v1-onnx](https://huggingface.co/elbruno/personaplex-7b-v1-onnx)
+
 ## References
 
 - [Qwen3-TTS GitHub](https://github.com/QwenLM/Qwen3-TTS)

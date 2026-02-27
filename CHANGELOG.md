@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ITextToSpeechClient`** — MEAI-aligned service contract for text-to-speech with `SynthesizeToMemoryAsync` and `SynthesizeStreamingAsync`
+- **`QwenTextToSpeechClient`** — production-ready implementation with:
+  - Thread-safe lazy initialization via `SemaphoreSlim` (model loads on first use, shared across concurrent callers)
+  - `SynthesizeToMemoryAsync` — returns audio as `byte[]` with automatic temp file cleanup
+  - `SynthesizeStreamingAsync` — `IAsyncEnumerable<TextToSpeechStreamingUpdate>` with session lifecycle events (Open → AudioChunk → Close)
+  - Proper `IDisposable` with cleanup of ONNX sessions, semaphore, and temp files
+  - GPU support via `sessionOptionsFactory` / `vocoderSessionOptionsFactory` parameters
+- **`TextToSpeechResponse`** — response type with `AudioData`, `MediaType`, `SampleRate`, `ModelId`
+- **`TextToSpeechStreamingUpdate`** — streaming update with `Kind` enum (`SessionOpen`, `AudioChunk`, `SessionClose`)
+- **`TextToSpeechOptions`** — request options with `VoiceId`, `Language`, `Instruct`, `ModelId`
+- **`AddQwenTextToSpeechClient()`** — DI extension method for registering `ITextToSpeechClient` as singleton
+- **Related Projects** section in README with link to [ElBruno.PersonaPlex](https://github.com/elbruno/ElBruno.PersonaPlex)
 - **GPU Acceleration** — configurable `SessionOptions` injection for CUDA and DirectML support
   - `TtsPipeline` and `VoiceClonePipeline` accept optional `Func<SessionOptions>?` parameter
   - `OrtSessionHelper` static class with `CreateCpuOptions()`, `CreateCudaOptions()`, `CreateDirectMlOptions()`

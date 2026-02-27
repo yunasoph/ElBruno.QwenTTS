@@ -43,6 +43,33 @@ public static class QwenTtsServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers <see cref="ITextToSpeechClient"/> as a singleton service with the specified options.
+    /// Provides thread-safe lazy initialization, in-memory synthesis, and streaming support.
+    /// Models are automatically downloaded on first use.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configure">Optional action to configure <see cref="QwenTtsOptions"/>.</param>
+    public static IServiceCollection AddQwenTextToSpeechClient(
+        this IServiceCollection services,
+        Action<QwenTtsOptions>? configure = null)
+    {
+        var options = new QwenTtsOptions();
+        configure?.Invoke(options);
+
+        var factory = ResolveSessionOptionsFactory(options);
+        var vocoderFactory = ResolveVocoderSessionOptionsFactory(options);
+
+        services.AddSingleton<ITextToSpeechClient>(
+            _ => new QwenTextToSpeechClient(
+                modelDir: options.ModelPath,
+                repoId: options.HuggingFaceRepo,
+                sessionOptionsFactory: factory,
+                vocoderSessionOptionsFactory: vocoderFactory));
+
+        return services;
+    }
+
     internal static Func<SessionOptions>? ResolveSessionOptionsFactory(QwenTtsOptions options)
     {
         if (options.SessionOptionsFactory != null)
