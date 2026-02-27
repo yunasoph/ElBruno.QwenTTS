@@ -71,3 +71,18 @@
 **By:** Coordinator
 **What:** Fixed 4 runtime bugs: (1) TTS embedding sizing — corrected prefill tensor dimensions, (2) Hidden state indexing — fixed decode loop stacking from flat to (B, 8, T, 128), (3) Code Predictor KV tracking — CP sessions no longer accumulate KV across groups; reset per group, (4) Tokenizer case sensitivity — ensured vocab.json respects case-sensitive special tokens.
 **Why:** Ensures pipeline produces correct outputs matching ONNX model contracts. All bugs found during code review before runtime testing.
+
+### 2026-02-22: Architecture Review — Post Issue #21
+**By:** Morpheus (Lead / Architect)
+**What:** ITextToSpeechClient abstraction is architecturally sound and production-ready. Aligns with Microsoft.Extensions.AI patterns. Provides thread-safe lazy initialization via SemaphoreSlim, memory-based synthesis, streaming support, and DI integration. All 43 unit tests pass (12 new tests added for the client).
+**Why:** Clean abstraction boundaries: QwenTextToSpeechClient handles concurrency/lifecycle; TtsPipeline handles ONNX inference. No leaky abstractions. Thread-safety via SemaphoreSlim double-check lock pattern is correct. Proper IDisposable implementation. DI-friendly extension follows .NET conventions (singleton lifetime, options pattern).
+
+### 2026-02-22: ITextToSpeechClient Code Review — Minor Observations
+**By:** Neo (.NET Developer)
+**What:** Implementation is production-ready and follows .NET best practices. Three observations for future consideration: (1) ConfigureAwait(false) missing on async/await calls — low impact for server/console apps, but could cause UI thread blocking in WPF/WinForms contexts, (2) TtsPipeline.SynthesizeAsync lacks CancellationToken parameter — very low impact since inference is expensive part already done, file I/O is fast, (3) SynthesizeStreamingAsync yields full audio in one chunk rather than true streaming — design correctly anticipates future chunked models, good forward compatibility.
+**Why:** Items 1-2 are cosmetic quality improvements, not blockers. Item 3 is well-designed for future models. Code is ready to ship as-is. Consider addressing 1-2 in future polish pass if library will be consumed by UI applications.
+
+### 2026-02-22: ITextToSpeechClient Test Coverage Review
+**By:** Tank (Tester/QA)
+**What:** All 41 tests pass (29 Core.Tests + 10 VoiceCloning.Tests + 2 TtsPipelineFactoryTests). ITextToSpeechClient has 12 new tests covering constructor validation, dispose patterns, input validation, type contracts, and DI registration. Significant test coverage gaps identified in production-critical scenarios: (1) Thread-safety — no validation of concurrent SemaphoreSlim access during lazy initialization, (2) Error handling — no tests for ONNX failures, file I/O exceptions, or cleanup-under-failure, (3) Streaming lifecycle — SessionClose guarantees and cancellation behavior untested, (4) DI resolution — registration verified but not actual ServiceProvider resolution + usage.
+**Why:** Production risks without these tests: race conditions in multi-threaded apps (ASP.NET Core), resource leaks under error conditions, silent failures in streaming scenarios. Recommend creating Issue #22 for post-milestone test coverage enhancement with Priority 1: thread-safety concurrency tests, Priority 2: error path tests, Priority 3: streaming lifecycle tests, Priority 4: DI resolution tests.

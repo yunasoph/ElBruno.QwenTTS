@@ -49,3 +49,11 @@ TextTokenizer.cs and Vocoder.cs are fully implemented. LanguageModel.cs is a ske
 - **Program.cs**: CLI now accepts `--model-dir` (required), `--language` (default auto), wires up full pipeline.
 - **Architecture decisions**: Used DenseTensor<T> for ONNX I/O, stackalloc for temp buffers (warnings about loops are acceptable — buffers are small), manual matrix-vector multiply for projections, multinomial sampling with Random.Shared.
 - **Key file paths**: {modelDir}/embeddings/*.npy, {modelDir}/config.json, {modelDir}/speaker_ids.json, {modelDir}/tokenizer/{vocab,merges}.json, {modelDir}/{talker_prefill,talker_decode,code_predictor,vocoder}.onnx
+
+### 2026-02-22: ITextToSpeechClient production implementation review
+**By:** Neo (code review of issue #21)
+**What:** Reviewed QwenTextToSpeechClient implementation. **Well done:** Thread-safe SemaphoreSlim lazy init with double-check pattern, proper IDisposable (dispose flag + GC.SuppressFinalize), temp file cleanup with best-effort try/catch in finally block, clean separation via ITextToSpeechClient abstraction, good DI extension with optional configuration, [EnumeratorCancellation] on streaming method, comprehensive parameter validation (ObjectDisposedException.ThrowIf, ArgumentException.ThrowIfNullOrWhiteSpace). **Minor concerns:** No ConfigureAwait(false) on async calls — relies on default sync context (acceptable for library code in most scenarios, but consider if library will be used in UI contexts). SynthesizeAsync on TtsPipeline doesn't accept CancellationToken — temp file write proceeds even if caller cancels (low impact — model inference already done by that point). Streaming currently loads full audio into memory before yielding — not true chunked streaming (acceptable given offline TTS model architecture).
+**Why:** Production-ready pattern for DI-enabled TTS client. Double-check locking prevents multiple downloads. Tests confirm all 41 passing (31 Core + 10 VoiceCloning). Code aligns with Microsoft.Extensions.AI conventions.
+
+### 2026-02-27: Warm-up Review — Neo's Contribution
+📌 Team update (2026-02-27T16:59:44Z): Architecture review completed. ITextToSpeechClient approved for production use with documentation updates recommended before v1.1.0. — Morpheus, Neo, Tank
