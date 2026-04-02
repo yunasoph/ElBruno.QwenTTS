@@ -13,6 +13,7 @@ public sealed class TtsPipeline : ITtsPipeline
     private readonly LanguageModel _languageModel;
     private readonly Vocoder _vocoder;
     private readonly EmbeddingStore _embeddings;
+    private readonly QwenModelVariant _variant;
 
     /// <summary>
     /// Creates a TtsPipeline from a local model directory.
@@ -20,12 +21,14 @@ public sealed class TtsPipeline : ITtsPipeline
     /// <param name="modelDir">Directory containing ONNX models, embeddings, and tokenizer.</param>
     /// <param name="sessionOptionsFactory">Optional factory for ONNX Runtime session options (e.g., for GPU acceleration). When null, uses CPU with max optimization.</param>
     /// <param name="vocoderSessionOptionsFactory">Optional separate factory for the vocoder model. Useful when GPU EP doesn't support vocoder ops (e.g., DirectML). When null, uses sessionOptionsFactory.</param>
-    public TtsPipeline(string modelDir, Func<SessionOptions>? sessionOptionsFactory = null, Func<SessionOptions>? vocoderSessionOptionsFactory = null)
+    /// <param name="variant">Model size variant. Used to determine feature support (e.g., instruction control).</param>
+    public TtsPipeline(string modelDir, Func<SessionOptions>? sessionOptionsFactory = null, Func<SessionOptions>? vocoderSessionOptionsFactory = null, QwenModelVariant variant = QwenModelVariant.Qwen06B)
     {
         var tokenizerDir = Path.Combine(modelDir, "tokenizer");
         var embeddingsDir = Path.Combine(modelDir, "embeddings");
         var configPath = Path.Combine(embeddingsDir, "config.json");
 
+        _variant = variant;
         _tokenizer = new TextTokenizer(tokenizerDir);
         _embeddings = new EmbeddingStore(embeddingsDir, configPath);
         _languageModel = new LanguageModel(modelDir, _embeddings, sessionOptionsFactory);
@@ -35,10 +38,22 @@ public sealed class TtsPipeline : ITtsPipeline
     /// <summary>Available speaker names from the model.</summary>
     public IReadOnlyCollection<string> Speakers => _embeddings.GetAvailableSpeakers();
 
+    /// <summary>The model variant this pipeline was created with.</summary>
+    public QwenModelVariant ModelVariant => _variant;
+
     public async Task SynthesizeAsync(string text, string speaker, string outputPath, 
                                      string language = "auto", string? instruct = null,
                                      IProgress<string>? progress = null)
     {
+        // Variant-aware instruct handling: 0.6B does not support instruction control
+        if (!string.IsNullOrEmpty(instruct) && !QwenModelVariantConfig.SupportsInstruct(_variant))
+        {
+            var warning = $"Warning: Instruction text ignored — {_variant} model does not support instruction control. Use 1.7B for style instructions.";
+            progress?.Report(warning);
+            Console.WriteLine(warning);
+            instruct = null;
+        }
+
         // Build prompt using tokenizer
         var tokenIds = _tokenizer.BuildCustomVoicePrompt(text, speaker, language, instruct);
 
@@ -77,31 +92,34 @@ public sealed class TtsPipeline : ITtsPipeline
     /// <summary>
     /// Creates a TtsPipeline, automatically downloading model files if they are missing.
     /// </summary>
-    /// <param name="modelDir">Directory to store/load model files. Defaults to shared location in LocalAppData.</param>
-    /// <param name="repoId">HuggingFace repository ID (default: elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX).</param>
+    /// <param name="modelDir">Directory to store/load model files. When null, uses the variant-specific default location.</param>
+    /// <param name="repoId">HuggingFace repository ID. When null with a variant, uses the variant's default repo.</param>
     /// <param name="progress">Optional progress callback for download status.</param>
     /// <param name="sessionOptionsFactory">Optional factory for ONNX Runtime session options (e.g., for GPU acceleration).</param>
     /// <param name="vocoderSessionOptionsFactory">Optional separate factory for the vocoder model (e.g., CPU fallback for DirectML).</param>
+    /// <param name="variant">Model size variant. Defaults to 0.6B for backward compatibility.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public static async Task<TtsPipeline> CreateAsync(
         string? modelDir = null,
-        string repoId = ModelDownloader.DefaultRepoId,
+        string? repoId = null,
         IProgress<string>? progress = null,
         Func<SessionOptions>? sessionOptionsFactory = null,
         Func<SessionOptions>? vocoderSessionOptionsFactory = null,
+        QwenModelVariant variant = QwenModelVariant.Qwen06B,
         CancellationToken cancellationToken = default)
     {
-        modelDir ??= ModelDownloader.DefaultModelDir;
-        if (!ModelDownloader.IsModelDownloaded(modelDir))
+        var (resolvedDir, resolvedRepo) = ModelDownloader.ResolveForVariant(variant, modelDir, repoId);
+
+        if (!ModelDownloader.IsModelDownloaded(resolvedDir))
         {
             progress?.Report("Model files not found — downloading from HuggingFace...");
             var downloadProgress = progress != null
                 ? new Progress<ModelDownloadProgress>(p => progress.Report(p.Message))
                 : null;
-            await ModelDownloader.DownloadModelAsync(modelDir, repoId, downloadProgress, cancellationToken);
+            await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken);
             progress?.Report("Model download complete.");
         }
-        return new TtsPipeline(modelDir, sessionOptionsFactory, vocoderSessionOptionsFactory);
+        return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant);
     }
 
     /// <summary>
@@ -110,15 +128,17 @@ public sealed class TtsPipeline : ITtsPipeline
     public static async Task<TtsPipeline> CreateAsync(
         string? modelDir,
         IProgress<ModelDownloadProgress> downloadProgress,
-        string repoId = ModelDownloader.DefaultRepoId,
+        string? repoId = null,
         Func<SessionOptions>? sessionOptionsFactory = null,
         Func<SessionOptions>? vocoderSessionOptionsFactory = null,
+        QwenModelVariant variant = QwenModelVariant.Qwen06B,
         CancellationToken cancellationToken = default)
     {
-        modelDir ??= ModelDownloader.DefaultModelDir;
-        if (!ModelDownloader.IsModelDownloaded(modelDir))
-            await ModelDownloader.DownloadModelAsync(modelDir, repoId, downloadProgress, cancellationToken);
-        return new TtsPipeline(modelDir, sessionOptionsFactory, vocoderSessionOptionsFactory);
+        var (resolvedDir, resolvedRepo) = ModelDownloader.ResolveForVariant(variant, modelDir, repoId);
+
+        if (!ModelDownloader.IsModelDownloaded(resolvedDir))
+            await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken);
+        return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant);
     }
 
     public void Dispose()

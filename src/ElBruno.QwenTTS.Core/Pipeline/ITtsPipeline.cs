@@ -9,6 +9,9 @@ public interface ITtsPipeline : IDisposable
     /// <summary>Available speaker names from the model.</summary>
     IReadOnlyCollection<string> Speakers { get; }
 
+    /// <summary>The model variant this pipeline was created with.</summary>
+    QwenModelVariant ModelVariant { get; }
+
     /// <summary>
     /// Synthesizes speech from text and saves to a WAV file.
     /// </summary>

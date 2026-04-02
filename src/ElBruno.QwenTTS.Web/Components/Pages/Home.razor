@@ -106,9 +106,22 @@
                         </select>
                     </div>
                     <div>
-                        <label class="form-label">Instruction</label>
-                        <input class="form-control form-control-sm" placeholder="e.g. speak calmly" @bind="_instruct" />
+                        <label class="form-label">
+                            Instruction
+                            @if (!Tts.SupportsInstruct)
+                            {
+                                <span style="font-size:0.75rem;color:var(--text-muted);margin-left:0.3rem;" title="Instruction control requires the 1.7B model variant">(1.7B only)</span>
+                            }
+                        </label>
+                        <input class="form-control form-control-sm" placeholder="@(Tts.SupportsInstruct ? "e.g. speak calmly, read with warmth" : "Requires 1.7B model")" @bind="_instruct" disabled="@(!Tts.SupportsInstruct)" />
                     </div>
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-muted);margin-top:0.5rem;">
+                    Model: <strong>@(Tts.ModelVariant == QwenModelVariant.Qwen17B ? "1.7B" : "0.6B")</strong>
+                    @if (Tts.SupportsInstruct)
+                    {
+                        <span> — ✅ Instruction control enabled</span>
+                    }
                 </div>
             </div>
 

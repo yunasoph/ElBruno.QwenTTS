@@ -11,9 +11,9 @@ public sealed class ModelDownloader
     public const string DefaultRepoId = "elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX";
 
     /// <summary>
-    /// Default shared model directory: %LOCALAPPDATA%/ElBruno/QwenTTS (Windows)
+    /// Default shared model directory root: %LOCALAPPDATA%/ElBruno/QwenTTS (Windows)
     /// or ~/.local/share/ElBruno/QwenTTS (Linux/macOS).
-    /// All apps using the Core library share this location to avoid duplicate downloads.
+    /// For variant-specific directories, use <see cref="QwenModelVariantConfig.GetDefaultModelDir"/>.
     /// </summary>
     public static string DefaultModelDir =>
         DefaultPathHelper.GetDefaultCacheDirectory("ElBruno/QwenTTS");
@@ -117,6 +117,21 @@ public sealed class ModelDownloader
         if (!IsModelDownloaded(modelDir))
             await DownloadModelAsync(modelDir, repoId, progress, cancellationToken);
         return modelDir;
+    }
+
+    /// <summary>
+    /// Resolves the model directory and repo ID for a given variant.
+    /// If <paramref name="modelDir"/> is null, uses the variant-specific default directory.
+    /// If <paramref name="repoId"/> is null, uses the variant's default repo.
+    /// </summary>
+    public static (string ModelDir, string RepoId) ResolveForVariant(
+        QwenModelVariant variant,
+        string? modelDir = null,
+        string? repoId = null)
+    {
+        var resolvedDir = modelDir ?? QwenModelVariantConfig.GetDefaultModelDir(variant);
+        var resolvedRepo = repoId ?? QwenModelVariantConfig.GetRepoId(variant);
+        return (resolvedDir, resolvedRepo);
     }
 
     private static ModelDownloadProgress MapProgress(DownloadProgress p)

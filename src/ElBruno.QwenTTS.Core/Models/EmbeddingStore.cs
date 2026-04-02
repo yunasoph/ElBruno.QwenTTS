@@ -8,16 +8,31 @@ namespace ElBruno.QwenTTS.Models;
 /// </summary>
 internal sealed class EmbeddingStore : IDisposable
 {
-    private readonly float[,] _textEmbedding;           // (vocab_size, 2048)
-    private readonly float[,] _fc1Weight;               // (2048, 2048)
-    private readonly float[] _fc1Bias;                  // (2048,)
-    private readonly float[,] _fc2Weight;               // (1024, 2048)
-    private readonly float[] _fc2Bias;                  // (1024,)
-    private readonly float[,] _talkerCodecEmbedding;    // (3072, 1024)
-    private readonly float[][,] _cpCodecEmbeddings;     // 15 × (2048, 1024)
+    private readonly float[,] _textEmbedding;           // (vocab_size, text_hidden_size)
+    private readonly float[,] _fc1Weight;               // (fc1_out, text_hidden_size)
+    private readonly float[] _fc1Bias;                  // (fc1_out,)
+    private readonly float[,] _fc2Weight;               // (hidden_size, fc1_out)
+    private readonly float[] _fc2Bias;                  // (hidden_size,)
+    private readonly float[,] _talkerCodecEmbedding;    // (vocab, hidden_size)
+    private readonly float[][,] _cpCodecEmbeddings;     // 15 × (cp_vocab, cp_hidden)
     private readonly Dictionary<string, int> _speakerIds;
+
+    // Dimensions derived from loaded arrays — no hardcoding
+    private readonly int _textHiddenSize;   // text embedding dim (2048 for both 0.6B and 1.7B)
+    private readonly int _fc1OutSize;       // intermediate MLP size
+    private readonly int _hiddenSize;       // talker hidden_size (1024 for 0.6B, 2048 for 1.7B)
+    private readonly int _cpHiddenSize;     // CP embedding dim (1024 for both variants)
     
     public ModelConfig Config { get; }
+
+    /// <summary>Talker hidden_size derived from loaded embedding dimensions.</summary>
+    public int HiddenSize => _hiddenSize;
+
+    /// <summary>Text embedding dimension derived from loaded data.</summary>
+    public int TextHiddenSize => _textHiddenSize;
+
+    /// <summary>Code Predictor embedding dimension derived from loaded data.</summary>
+    public int CpHiddenSize => _cpHiddenSize;
 
     public EmbeddingStore(string embeddingsDir, string configPath)
     {
@@ -49,6 +64,12 @@ internal sealed class EmbeddingStore : IDisposable
         var speakerJson = File.ReadAllText(speakerIdsPath);
         _speakerIds = JsonSerializer.Deserialize<Dictionary<string, int>>(speakerJson)
             ?? throw new InvalidDataException("Failed to parse speaker_ids.json");
+
+        // Derive dimensions from loaded arrays
+        _textHiddenSize = _textEmbedding.GetLength(1);
+        _fc1OutSize = _fc1Weight.GetLength(0);
+        _hiddenSize = _fc2Weight.GetLength(0);
+        _cpHiddenSize = _cpCodecEmbeddings[0].GetLength(1);
     }
 
     /// <summary>
@@ -56,61 +77,62 @@ internal sealed class EmbeddingStore : IDisposable
     /// </summary>
     public void TextEmbedding(int tokenId, Span<float> output)
     {
-        if (output.Length != 2048)
-            throw new ArgumentException("Output must be length 2048");
+        if (output.Length != _textHiddenSize)
+            throw new ArgumentException($"Output must be length {_textHiddenSize}");
         
-        for (int i = 0; i < 2048; i++)
+        for (int i = 0; i < _textHiddenSize; i++)
             output[i] = _textEmbedding[tokenId, i];
     }
 
     /// <summary>
     /// Applies text projection MLP: output = fc2(silu(fc1(input)))
+    /// Maps from text_hidden_size → talker hidden_size.
     /// </summary>
-    public void TextProjection(ReadOnlySpan<float> input2048, Span<float> output1024)
+    public void TextProjection(ReadOnlySpan<float> input, Span<float> output)
     {
-        if (input2048.Length != 2048)
-            throw new ArgumentException("Input must be length 2048");
-        if (output1024.Length != 1024)
-            throw new ArgumentException("Output must be length 1024");
+        if (input.Length != _textHiddenSize)
+            throw new ArgumentException($"Input must be length {_textHiddenSize}");
+        if (output.Length != _hiddenSize)
+            throw new ArgumentException($"Output must be length {_hiddenSize}");
 
-        // fc1: (2048, 2048) @ input + bias → hidden (2048,)
-        Span<float> hidden = stackalloc float[2048];
-        MatMul(_fc1Weight, input2048, hidden);
-        for (int i = 0; i < 2048; i++)
+        // fc1: (fc1_out, text_hidden_size) @ input + bias → hidden
+        var hidden = new float[_fc1OutSize];
+        MatMul(_fc1Weight, input, hidden);
+        for (int i = 0; i < _fc1OutSize; i++)
             hidden[i] = SiLU(hidden[i] + _fc1Bias[i]);
 
-        // fc2: (1024, 2048) @ hidden + bias → output (1024,)
-        MatMul(_fc2Weight, hidden, output1024);
-        for (int i = 0; i < 1024; i++)
-            output1024[i] += _fc2Bias[i];
+        // fc2: (hidden_size, fc1_out) @ hidden + bias → output
+        MatMul(_fc2Weight, hidden, output);
+        for (int i = 0; i < _hiddenSize; i++)
+            output[i] += _fc2Bias[i];
     }
 
     /// <summary>
     /// Looks up talker codec embedding for a token ID.
     /// </summary>
-    public void TalkerCodecEmbedding(int tokenId, Span<float> output1024)
+    public void TalkerCodecEmbedding(int tokenId, Span<float> output)
     {
-        if (output1024.Length != 1024)
-            throw new ArgumentException("Output must be length 1024");
+        if (output.Length != _hiddenSize)
+            throw new ArgumentException($"Output must be length {_hiddenSize}");
         
-        for (int i = 0; i < 1024; i++)
-            output1024[i] = _talkerCodecEmbedding[tokenId, i];
+        for (int i = 0; i < _hiddenSize; i++)
+            output[i] = _talkerCodecEmbedding[tokenId, i];
     }
 
     /// <summary>
     /// Looks up CP codec embedding for a group and token ID.
     /// groupIndex is 0-14 (maps to cp_codec_embedding_0..14).
     /// </summary>
-    public void CpCodecEmbedding(int groupIndex, int tokenId, Span<float> output1024)
+    public void CpCodecEmbedding(int groupIndex, int tokenId, Span<float> output)
     {
         if (groupIndex < 0 || groupIndex >= 15)
             throw new ArgumentException($"groupIndex must be 0-14, got {groupIndex}");
-        if (output1024.Length != 1024)
-            throw new ArgumentException("Output must be length 1024");
+        if (output.Length != _cpHiddenSize)
+            throw new ArgumentException($"Output must be length {_cpHiddenSize}");
         
         var table = _cpCodecEmbeddings[groupIndex];
-        for (int i = 0; i < 1024; i++)
-            output1024[i] = table[tokenId, i];
+        for (int i = 0; i < _cpHiddenSize; i++)
+            output[i] = table[tokenId, i];
     }
 
     /// <summary>

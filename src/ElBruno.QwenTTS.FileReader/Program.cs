@@ -6,7 +6,7 @@ namespace ElBruno.QwenTTS.FileReader;
 
 /// <summary>
 /// CLI app that reads a text or SRT file and generates speech audio for each segment.
-/// Usage: ElBruno.QwenTTS.FileReader --model-dir ./models --input file.txt --speaker ryan [--language auto] [--output-dir ./output] [--instruct "speak calmly"]
+/// Usage: ElBruno.QwenTTS.FileReader --model-dir ./models --input file.txt --speaker ryan [--language auto] [--output-dir ./output] [--instruct "speak calmly"] [--variant 1.7b]
 /// </summary>
 public static class Program
 {
@@ -18,10 +18,20 @@ public static class Program
         var outputDir = GetArg(args, "--output-dir") ?? "output";
         var language = GetArg(args, "--language") ?? "auto";
         var instruct = GetArg(args, "--instruct");
+        var variantStr = GetArg(args, "--variant");
 
         if (string.IsNullOrEmpty(modelDir) || string.IsNullOrEmpty(inputFile))
         {
-            Console.Error.WriteLine("Usage: ElBruno.QwenTTS.FileReader --model-dir ./models --input file.txt --speaker ryan [--language auto] [--output-dir ./output] [--instruct \"speak calmly\"]");
+            Console.Error.WriteLine("Usage: ElBruno.QwenTTS.FileReader --model-dir ./models --input file.txt --speaker ryan [--language auto] [--output-dir ./output] [--instruct \"speak calmly\"] [--variant 1.7b]");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Options:");
+            Console.Error.WriteLine("  --model-dir   Path to model directory (required)");
+            Console.Error.WriteLine("  --input       Input text or SRT file (required)");
+            Console.Error.WriteLine("  --speaker     Speaker name (default: Ryan)");
+            Console.Error.WriteLine("  --output-dir  Output directory (default: output)");
+            Console.Error.WriteLine("  --language    Language: auto, english, chinese, etc. (default: auto)");
+            Console.Error.WriteLine("  --instruct    Style instruction, e.g. \"Read with warmth\" (1.7B only)");
+            Console.Error.WriteLine("  --variant     Model variant: 0.6b (default), 1.7b");
             return 1;
         }
 
@@ -30,6 +40,8 @@ public static class Program
             Console.Error.WriteLine($"Error: file not found: {inputFile}");
             return 1;
         }
+
+        var variant = ParseVariant(variantStr);
 
         Directory.CreateDirectory(outputDir);
 
@@ -47,17 +59,21 @@ public static class Program
         }
 
         Console.WriteLine($"Model:    {modelDir}");
+        Console.WriteLine($"Variant:  {variant}");
         Console.WriteLine($"Input:    {inputFile} ({ext})");
         Console.WriteLine($"Speaker:  {speaker}");
         Console.WriteLine($"Language: {language}");
         Console.WriteLine($"Output:   {outputDir}");
         Console.WriteLine($"Segments: {segments.Count}");
+        if (instruct is not null)
+            Console.WriteLine($"Instruct: {instruct}");
         Console.WriteLine();
 
         try
         {
             using var pipeline = await TtsPipeline.CreateAsync(modelDir,
-                progress: new Progress<string>(msg => Console.WriteLine($"  {msg}")));
+                progress: new Progress<string>(msg => Console.WriteLine($"  {msg}")),
+                variant: variant);
             var baseName = Path.GetFileNameWithoutExtension(inputFile);
 
             for (int i = 0; i < segments.Count; i++)
@@ -142,5 +158,18 @@ public static class Program
     {
         var index = Array.IndexOf(args, name);
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
+    static QwenModelVariant ParseVariant(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return QwenModelVariant.Qwen06B;
+
+        return value.ToLowerInvariant() switch
+        {
+            "0.6b" or "06b" or "0.6" => QwenModelVariant.Qwen06B,
+            "1.7b" or "17b" or "1.7" => QwenModelVariant.Qwen17B,
+            _ => throw new ArgumentException($"Unknown variant '{value}'. Valid values: 0.6b, 1.7b")
+        };
     }
 }

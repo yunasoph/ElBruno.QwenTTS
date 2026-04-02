@@ -30,13 +30,13 @@ public static class QwenTtsServiceExtensions
         {
             var factory = ResolveSessionOptionsFactory(options);
             var vocoderFactory = ResolveVocoderSessionOptionsFactory(options);
-            var modelDir = options.ModelPath ?? ModelDownloader.DefaultModelDir;
 
             return TtsPipeline.CreateAsync(
-                modelDir: modelDir,
+                modelDir: options.ModelPath,
                 repoId: options.HuggingFaceRepo,
                 sessionOptionsFactory: factory,
-                vocoderSessionOptionsFactory: vocoderFactory
+                vocoderSessionOptionsFactory: vocoderFactory,
+                variant: options.ModelVariant
             ).GetAwaiter().GetResult();
         });
 
@@ -64,6 +64,7 @@ public static class QwenTtsServiceExtensions
             _ => new QwenTextToSpeechClient(
                 modelDir: options.ModelPath,
                 repoId: options.HuggingFaceRepo,
+                variant: options.ModelVariant,
                 sessionOptionsFactory: factory,
                 vocoderSessionOptionsFactory: vocoderFactory));
 

@@ -13,6 +13,7 @@ public sealed class TtsPipelineService : IDisposable
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly string _outputDir;
     private readonly string _modelDir;
+    private readonly QwenModelVariant _variant;
     private bool _isInitializing;
     private bool _isReady;
 
@@ -25,6 +26,12 @@ public sealed class TtsPipelineService : IDisposable
     /// <summary>True when models exist on disk (may not be loaded yet).</summary>
     public bool IsModelDownloaded => ModelDownloader.IsModelDownloaded(_modelDir);
 
+    /// <summary>The model variant this service is configured for.</summary>
+    public QwenModelVariant ModelVariant => _variant;
+
+    /// <summary>Whether the current variant supports instruction control.</summary>
+    public bool SupportsInstruct => QwenModelVariantConfig.SupportsInstruct(_variant);
+
     /// <summary>Fires during model download with detailed progress.</summary>
     public event Action<ModelDownloadProgress>? OnDownloadProgress;
 
@@ -33,10 +40,14 @@ public sealed class TtsPipelineService : IDisposable
 
     public TtsPipelineService(IConfiguration config, IWebHostEnvironment env)
     {
+        // Parse model variant from config
+        var variantStr = config["TTS:Variant"];
+        _variant = ParseVariant(variantStr);
+
         var modelDir = config["TTS:ModelDir"];
         if (string.IsNullOrEmpty(modelDir))
         {
-            _modelDir = ModelDownloader.DefaultModelDir;
+            _modelDir = QwenModelVariantConfig.GetDefaultModelDir(_variant);
         }
         else if (!Path.IsPathRooted(modelDir))
         {
@@ -51,6 +62,19 @@ public sealed class TtsPipelineService : IDisposable
         Directory.CreateDirectory(_outputDir);
     }
 
+    private static QwenModelVariant ParseVariant(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return QwenModelVariant.Qwen06B;
+
+        return value.ToLowerInvariant() switch
+        {
+            "0.6b" or "06b" or "0.6" => QwenModelVariant.Qwen06B,
+            "1.7b" or "17b" or "1.7" => QwenModelVariant.Qwen17B,
+            _ => QwenModelVariant.Qwen06B
+        };
+    }
+
     /// <summary>
     /// Initialize the pipeline, downloading models if needed.
     /// Call once at startup; safe to call multiple times.
@@ -63,7 +87,7 @@ public sealed class TtsPipelineService : IDisposable
         try
         {
             var progress = new Progress<ModelDownloadProgress>(p => OnDownloadProgress?.Invoke(p));
-            _pipeline = await TtsPipeline.CreateAsync(_modelDir, progress, cancellationToken: cancellationToken);
+            _pipeline = await TtsPipeline.CreateAsync(_modelDir, progress, variant: _variant, cancellationToken: cancellationToken);
             _isReady = true;
             OnInitialized?.Invoke(true, null);
         }

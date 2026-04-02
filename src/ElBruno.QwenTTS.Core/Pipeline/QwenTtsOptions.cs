@@ -6,16 +6,20 @@ namespace ElBruno.QwenTTS.Pipeline;
 public class QwenTtsOptions
 {
     /// <summary>
-    /// Path to local model directory. When null, uses the default shared location
-    /// (<c>%LOCALAPPDATA%/ElBruno.QwenTTS/models</c> on Windows, <c>~/.local/share/ElBruno.QwenTTS/models</c> on Linux/macOS).
+    /// Path to local model directory. When null, uses the variant-specific default shared location.
     /// </summary>
     public string? ModelPath { get; set; }
 
     /// <summary>
     /// HuggingFace repository ID for model download.
-    /// Default: <c>elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX</c>.
+    /// When null, automatically determined from <see cref="ModelVariant"/>.
     /// </summary>
-    public string HuggingFaceRepo { get; set; } = ModelDownloader.DefaultRepoId;
+    public string? HuggingFaceRepo { get; set; }
+
+    /// <summary>
+    /// Model size variant. Defaults to <see cref="QwenModelVariant.Qwen06B"/>.
+    /// </summary>
+    public QwenModelVariant ModelVariant { get; set; } = QwenModelVariant.Qwen06B;
 
     /// <summary>
     /// Execution provider for GPU/CPU selection. Default: <see cref="Pipeline.ExecutionProvider.Cpu"/>.
@@ -26,6 +30,13 @@ public class QwenTtsOptions
     /// GPU device ID when using CUDA or DirectML. Default: 0.
     /// </summary>
     public int GpuDeviceId { get; set; } = 0;
+
+    /// <summary>
+    /// Default instruction text for speech style control (e.g., "Read with a calm, warm tone").
+    /// Only effective when <see cref="ModelVariant"/> is <see cref="QwenModelVariant.Qwen17B"/> or higher.
+    /// Ignored for 0.6B models which do not support instruction control.
+    /// </summary>
+    public string? InstructText { get; set; }
 
     /// <summary>
     /// Optional custom session options factory. When set, overrides <see cref="ExecutionProvider"/>.

@@ -152,6 +152,10 @@
                 <td>@(Tts.IsReady ? "✅ Ready" : Tts.IsInitializing ? "⏳ Initializing..." : "⬜ Not initialized")</td>
             </tr>
             <tr>
+                <td class="label-muted">TTS Model Variant</td>
+                <td>@(Tts.ModelVariant == QwenModelVariant.Qwen17B ? "1.7B" : "0.6B") @(Tts.SupportsInstruct ? "(instruction control ✅)" : "")</td>
+            </tr>
+            <tr>
                 <td class="label-muted">TTS Models Downloaded</td>
                 <td>@(Tts.IsModelDownloaded ? "✅ Yes" : "❌ No")</td>
             </tr>

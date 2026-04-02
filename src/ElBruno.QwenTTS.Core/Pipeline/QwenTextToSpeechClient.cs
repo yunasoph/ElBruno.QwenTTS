@@ -17,7 +17,8 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
     private readonly string _defaultVoice;
     private readonly string _defaultLanguage;
     private readonly string? _modelDir;
-    private readonly string _repoId;
+    private readonly string? _repoId;
+    private readonly QwenModelVariant _variant;
     private readonly Func<Microsoft.ML.OnnxRuntime.SessionOptions>? _sessionOptionsFactory;
     private readonly Func<Microsoft.ML.OnnxRuntime.SessionOptions>? _vocoderSessionOptionsFactory;
 
@@ -30,15 +31,17 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
     /// </summary>
     /// <param name="defaultVoice">Default speaker name (e.g., "ryan", "serena"). Default: "ryan".</param>
     /// <param name="defaultLanguage">Default language (e.g., "english", "auto"). Default: "auto".</param>
-    /// <param name="modelDir">Optional model directory. Uses <see cref="ModelDownloader.DefaultModelDir"/> if null.</param>
-    /// <param name="repoId">HuggingFace repository ID for model download.</param>
+    /// <param name="modelDir">Optional model directory. When null, uses the variant-specific default.</param>
+    /// <param name="repoId">HuggingFace repository ID. When null, uses the variant's default repo.</param>
+    /// <param name="variant">Model size variant. Defaults to 0.6B.</param>
     /// <param name="sessionOptionsFactory">Optional ONNX Runtime session options factory (e.g., for GPU).</param>
     /// <param name="vocoderSessionOptionsFactory">Optional separate factory for the vocoder model.</param>
     public QwenTextToSpeechClient(
         string defaultVoice = "ryan",
         string defaultLanguage = "auto",
         string? modelDir = null,
-        string repoId = ModelDownloader.DefaultRepoId,
+        string? repoId = null,
+        QwenModelVariant variant = QwenModelVariant.Qwen06B,
         Func<Microsoft.ML.OnnxRuntime.SessionOptions>? sessionOptionsFactory = null,
         Func<Microsoft.ML.OnnxRuntime.SessionOptions>? vocoderSessionOptionsFactory = null)
     {
@@ -46,6 +49,7 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
         _defaultLanguage = defaultLanguage;
         _modelDir = modelDir;
         _repoId = repoId;
+        _variant = variant;
         _sessionOptionsFactory = sessionOptionsFactory;
         _vocoderSessionOptionsFactory = vocoderSessionOptionsFactory;
     }
@@ -126,6 +130,7 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
             _pipeline = await TtsPipeline.CreateAsync(
                 _modelDir,
                 repoId: _repoId,
+                variant: _variant,
                 sessionOptionsFactory: _sessionOptionsFactory,
                 vocoderSessionOptionsFactory: _vocoderSessionOptionsFactory,
                 cancellationToken: cancellationToken);
