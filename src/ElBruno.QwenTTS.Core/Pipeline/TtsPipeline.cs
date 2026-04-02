@@ -56,21 +56,21 @@ public sealed class TtsPipeline : ITtsPipeline
                                      string language = "auto", string? instruct = null,
                                      IProgress<string>? progress = null)
     {
-        // Variant-aware instruct handling: 0.6B does not support instruction control
-        if (!string.IsNullOrEmpty(instruct) && !QwenModelVariantConfig.SupportsInstruct(_variant))
-        {
-            var warning = $"Warning: Instruction text ignored — {_variant} model does not support instruction control. Use 1.7B for style instructions.";
-            progress?.Report(warning);
-            Console.WriteLine(warning);
-            instruct = null;
-        }
-
         // Input validation
         ArgumentNullException.ThrowIfNull(text);
         if (text.Length == 0)
             throw new ArgumentException("Text cannot be empty.", nameof(text));
         if (text.Length > 10000)
             throw new ArgumentException("Text exceeds maximum length of 10,000 characters.", nameof(text));
+
+        // Variant-aware instruct handling: 0.6B does not support instruction control
+        if (!string.IsNullOrEmpty(instruct) && !QwenModelVariantConfig.SupportsInstruct(_variant))
+        {
+            var warning = $"Warning: Instruction text ignored \u2014 {_variant} model does not support instruction control. Use 1.7B for style instructions.";
+            progress?.Report(warning);
+            Console.WriteLine(warning);
+            instruct = null;
+        }
 
         // Build prompt using tokenizer
         var tokenIds = _tokenizer.BuildCustomVoicePrompt(text, speaker, language, instruct);
