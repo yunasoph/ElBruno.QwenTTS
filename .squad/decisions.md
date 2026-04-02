@@ -114,3 +114,18 @@
 - GPU-based 1.7B ONNX export when infrastructure available
 - Performance optimization: FP16 export, quantization (future)
 - Additional variants if user demand increases
+
+### 2026-04-02: Instruction Control API — Variant-Aware Design
+**By:** Neo (.NET Developer)
+**What:** Instruction control is variant-gated at the pipeline level, not the tokenizer level. `TtsPipeline.SynthesizeAsync()` checks `QwenModelVariantConfig.SupportsInstruct(_variant)` and nullifies instruct text with a warning for unsupported variants (0.6B). The tokenizer's `BuildCustomVoicePrompt` continues to accept instruct unconditionally — the gating happens one layer above.
+**Why:** The tokenizer is a low-level component that shouldn't enforce model-variant policy. The pipeline is the natural boundary where user intent meets model capability. Warning (not exception) for unsupported instruct preserves backward compat. `QwenModelVariantConfig.SupportsInstruct()` is the single source of truth for instruction support — all consumer apps (Web, CLI, FileReader) use it for UI/UX decisions.
+
+### 2026-04-02: Phase 1 Code Review — 1.7B Model Support (Approved)
+**By:** Morpheus (Lead / Architect)
+**What:** Phase 1 implementation (config-driven multi-variant architecture) approved for merge. All hardcoded dimensions eliminated. Three agents (Neo, Trinity, Tank) delivered clean separation: `QwenModelVariant` enum → download/storage only; `config.json` → runtime dimensions; `.npy` shapes → ground truth. Build: 0 errors, 88 tests pass. Backward compatible: 0.6B remains default, no API changes.
+**Why:** Architecture is well-layered and future-proof (3B, quantized, etc. work automatically). Backward compatibility perfect — existing users see zero behavioral changes. One latent risk identified: Code Predictor input dimension for 1.7B (requires validation during Phase 2 ONNX export). Ready to merge.
+
+### 2026-04-02T18:15Z: 1.7B ONNX Export Complete (Trinity)
+**By:** Trinity (ML Engineer)
+**What:** Full 1.7B ONNX model export pipeline completed successfully (~50 min on NVIDIA A10 24GB). Fixed 3 export bugs during pipeline: (1) vmap masking — attention mask broadcast shape, (2) Code Predictor dimensions — correctly extract 1024 elements from 2048-dim talker hidden state, (3) data consolidation — GPU tensors moved to CPU before .numpy(). Exported all models (~12.5 GB) to python/onnx_1.7b/ and uploaded to HuggingFace (elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX). All 33 ONNX model files + tokenizer artifacts + config ready for C# integration.
+**Why:** Unblocks Phase 2 C# integration. Export scripts now config-driven (no hardcoded dims) — supports future variants. Bug fixes ensure 1.7B inference matches Python reference. Ready for Neo's C# variant loader and end-to-end validation testing.
