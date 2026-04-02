@@ -188,3 +188,13 @@ TextTokenizer.cs and Vocoder.cs are fully implemented. LanguageModel.cs is a ske
 **Branch:** squad/phase-3-ci-linux  
 **Closes:** Issue #22 Phase 3 CI/Linux Checklist
 
+
+### 2026-02-28: Fix NPY/ONNX file size limits for 1.7B model support (Issue #25)
+**Status:** ✅ Complete
+**What:** Raised SEC-3 file size limits that blocked 1.7B Qwen3-TTS model usage. NpyReader.cs maxNpySize increased from 500 MB to 2 GB (1.7B text_embedding.npy is ~1.2 GB). Vocoder.cs maxOnnxSize increased from 2 GB to 8 GB for consistency with LanguageModel.cs.
+**Files Modified:**
+   - `src/ElBruno.QwenTTS.Core/Models/NpyReader.cs` — maxNpySize: 500 MB → 2 GB
+   - `src/ElBruno.QwenTTS.Core/Models/Vocoder.cs` — maxOnnxSize: 2 GB → 8 GB
+**Build Status:** ✅ 0 warnings, 0 errors. All 153 tests passing (143 Core + 10 VoiceCloning).
+**Branch:** main
+**Fixes:** Issue #25
