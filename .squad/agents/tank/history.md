@@ -126,3 +126,20 @@
 - **Benchmark design:** End-to-end benchmarks (tokenization + inference + vocoder + write) provide holistic performance view. Separate short/medium/long texts capture scaling behavior. CJK text benchmarks validate Unicode handling performance. Memory diagnostics (Gen 0/1/2 collections) reveal GC pressure. BenchmarkDotNet's statistical analysis (mean, error, StdDev) provides confidence in measurements. JSON export enables baseline tracking and regression detection.
 - **Baseline interpretation:** Mean execution time is primary metric; compare across runs for regression detection (>10% increase = investigate). Memory allocation tracks heap pressure (>20% increase = memory leak). StdDev reveals non-deterministic behavior (GC pauses, disk I/O). Baseline runs require: downloaded models (~5.5 GB), 8+ GB RAM, Release build, minimal background processes. Results vary by hardware; always compare on same machine for consistency.
 
+### 2026-04-03: NpyReader 2GB Size Limit Tests (Issue #25)
+
+**Status:** 153 Core tests pass (10 new NpyReaderSizeLimitTests + updated Sec3FileSizeTests).
+
+**What was done:**
+- Created `NpyReaderSizeLimitTests.cs` — 10 integration tests that **actually call NpyReader** (ReadFloat1D, ReadFloat2D, ReadInt64_1D) against sparse files created via `FileStream.SetLength()`. Tests verify: rejection above 2GB, error message format (contains actual size + maximum), size check precedence over content validation, boundary at exactly 2GB (inclusive), and 1.7B model scenario (1.2GB file passes).
+- Updated `Sec3FileSizeTests.cs` — changed all NPY limit constants from 500MB to 2GB to match Neo's change. Removed stale `OnnxIs4XNpyLimit` test. Added `FileLimits_OnnxAndNpyShareSame2GBLimit` and `TextEmbedding17B_FitsWithinNpyLimit`.
+
+**Key Findings:**
+- The existing Sec3FileSizeTests were **documentation-only** — they compared file sizes against local constants but never called NpyReader. The new NpyReaderSizeLimitTests are true integration tests that exercise the actual validation path.
+- Sparse files via `SetLength()` are perfect for size-limit testing: they report the correct `FileInfo.Length` without allocating disk space. Tests run in <1 second total.
+- NpyReader's size check happens **before** magic byte validation — confirmed by the `SizeCheck_HappensBeforeContentValidation` test. This is correct security behavior (fail-fast on size).
+- The error message format uses `{fileInfo.Length / 1e6:F2} MB` — tested that a 3GB file reports "3000.00" and the maximum shows "2000.00".
+- Boundary behavior: exactly 2,000,000,000 bytes passes the size check (goes on to fail on invalid magic); 2,000,000,001 bytes is rejected.
+
+📌 Team update: NpyReader 2GB size limit fully tested. 10 new integration tests + Sec3 constants updated. All 153 Core tests green. — Tank
+
