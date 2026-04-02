@@ -90,3 +90,26 @@
 **TDD Approach:** Created the enum + config types in the Core library as the API contract, then wrote tests against it. Neo can integrate these types into ModelDownloader, TtsPipeline, and EmbeddingStore/LanguageModel during the refactor.
 
 📌 Team update (2026-04-02T1719): Phase 1 complete — multi-variant support (0.6B and 1.7B) implemented across C#, Python, and tests. Orchestration logs and decisions merged. Non-breaking change, 88 tests pass. — Scribe
+
+### 2026-04-02: Test Coverage Audit — 1.7B Model Support (Issue #26)
+
+**Status:** All 122 tests pass (112 Core + 10 VoiceCloning). 34 new tests added (up from 88).
+
+**Coverage Gaps Found & Fixed:**
+1. **SupportsInstruct() completely untested** — the key 1.7B feature had zero coverage. Added 6 tests covering true/false per variant, default variant, invalid variant graceful handling, and structural invariant (instruct requires hidden_size ≥ 2048).
+2. **ModelDownloader.ResolveForVariant() untested** — critical path resolution used by CreateAsync had no tests. Added 6 tests for null overrides, custom overrides, and legacy path matching.
+3. **GetDefaultModelDir invalid variant** — was the only config method without an invalid-variant test. Fixed.
+4. **QwenTtsOptions.InstructText** — new property with no coverage. Added 3 tests.
+5. **QwenTextToSpeechClient with 1.7B variant** — constructor never tested with non-default variant. Added 4 tests.
+6. **DI registration with variant** — AddQwenTextToSpeechClient/AddQwenTts with 1.7B config untested. Added 2 tests.
+7. **Enum/config uniqueness** — no tests verified all variants have unique values across all mappings. Added 4 tests.
+
+**Remaining Gaps (require model files):**
+- Instruct gating in SynthesizeAsync (warning + nullify on 0.6B) — needs loaded pipeline
+- TtsPipeline.ModelVariant property validation — needs model files
+- Config.json parsing for 1.7B dimensions (hidden_size=2048) — needs actual .npy + config
+- Concurrent CreateAsync with different variants — thread-safety
+
+**Key Insight:** SupportsInstruct uses `_ => false` (not throw) for invalid variants, which is intentionally different from all other config methods that throw ArgumentOutOfRangeException. This is correct — graceful degradation for feature gating vs fail-fast for required config. Tested both behaviors explicitly.
+
+📌 Team update (2026-04-02): Coverage audit complete for #26. Added 34 tests, 7 gaps filled. 122 tests passing. Remaining gaps require model files for integration testing. — Tank
