@@ -10,7 +10,8 @@
 Run **Qwen3-TTS** text-to-speech locally from C# using ONNX Runtime — no Python needed at inference time. Models are downloaded automatically on first run.
 
 Pre-exported ONNX models are hosted on HuggingFace:
-[**elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX**](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX) (preset voices) |
+[**elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX**](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX) (0.6B preset voices) |
+[**elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX**](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX) (1.7B preset voices + instruct) |
 [**elbruno/Qwen3-TTS-12Hz-0.6B-Base-ONNX**](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-Base-ONNX) (voice cloning)
 
 ## Features
@@ -105,8 +106,8 @@ See [docs/gpu-acceleration.md](docs/gpu-acceleration.md) for full setup instruct
 
 ```bash
 dotnet run --project src/ElBruno.QwenTTS -- --model-dir models --text "Welcome to the future of speech synthesis." --speaker serena --output welcome.wav
-dotnet run --project src/ElBruno.QwenTTS -- --model-dir models --text "Speaking with excitement and energy!" --speaker aiden --instruct "speak with excitement" --output excited.wav
-dotnet run --project src/ElBruno.QwenTTS -- --model-dir models --text "A calm and gentle narration." --speaker ryan --instruct "speak slowly and calmly" --output calm.wav
+dotnet run --project src/ElBruno.QwenTTS -- --model-dir models --text "Speaking with excitement and energy!" --speaker aiden --variant 1.7b --instruct "speak with excitement" --output excited.wav
+dotnet run --project src/ElBruno.QwenTTS -- --model-dir models --text "A calm and gentle narration." --speaker ryan --variant 1.7b --instruct "speak slowly and calmly" --output calm.wav
 ```
 
 ### Spanish Examples

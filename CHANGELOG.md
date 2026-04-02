@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **47 new unit tests** — `ModelVariantTests`, `ModelVariantDownloaderTests`, `TtsPipelineVariantTests`
 - **Python export updates** — `read_model_dims(config)` replaces hardcoded constants; 1.7B download support
 
-- **`ITextToSpeechClient`** — MEAI-aligned service contractfor text-to-speech with `SynthesizeToMemoryAsync` and `SynthesizeStreamingAsync`
+- **`ITextToSpeechClient`** — MEAI-aligned service contract for text-to-speech with `SynthesizeToMemoryAsync` and `SynthesizeStreamingAsync`
 - **`QwenTextToSpeechClient`** — production-ready implementation with:
   - Thread-safe lazy initialization via `SemaphoreSlim` (model loads on first use, shared across concurrent callers)
   - `SynthesizeToMemoryAsync` — returns audio as `byte[]` with automatic temp file cleanup

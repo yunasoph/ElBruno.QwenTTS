@@ -88,3 +88,103 @@ TextTokenizer.cs and Vocoder.cs are fully implemented. LanguageModel.cs is a ske
 - **Web Home.razor** — Instruct input field is disabled when variant doesn't support it. Shows model variant badge and instruction support status.
 - **Web Settings.razor** — Shows model variant and instruction support in status table.
 **Backward compat:** 100%. Default variant remains 0.6B. No instruct = identical behavior. 88 tests pass (78 Core + 10 VoiceCloning). Build clean.
+### 2026-02-28: Compiler warnings fixed (Neo)
+**What:** Fixed 6 compiler warnings across 4 files: (1) CS1574 — Fixed XML doc cref in QwenVoicePreset.cs (line 5) by changing `<see cref="ToSpeakerName"/>` to `<see cref="QwenVoicePresetExtensions.ToSpeakerName"/>`, (2) CA2022 × 4 — Replaced 4 unsafe FileStream.Read calls with ReadExactly in NpyReader.cs (lines 58, 72, 78, 104), (3) CS4014 × 2 — Added `async` to lambda in Progress callback and `await` to ScrollConsole() call in VoiceClone.razor:432 and Home.razor:372.
+**Why:** Clean build with 0 warnings/errors. ReadExactly() guarantees full buffer reads (required for NPY header/data parsing); async lambdas properly await async methods in Blazor component callbacks.
+
+### 2026-02-28: SEC-1 and SEC-2 complete
+**Status:** ✅ Complete  
+**What:** SEC-1 Input Validation (TtsPipeline & TtsPipelineService) + SEC-2 Path Traversal Validation (VoiceCloningDownloader). 28 Core tests passing (19 original + 9 new Tank validation tests), 10 Voice Cloning tests passing.
+**Build:** 0 errors, 0 warnings across all 5 projects
+
+### 2026-02-28: SEC-3 File Size Pre-Checks for ONNX/NPY (Neo)
+**Status:** ✅ Complete  
+**What:** Added file size validation to model file loaders before memory allocation:
+   - **LanguageModel.cs** (3 methods): GetPrefillSession(), GetDecodeSession(), GetCpSession() — each checks ONNX file ≤ 2 GB before `new InferenceSession()`
+   - **Vocoder.cs** (1 method): GetSession() — checks vocoder ONNX file ≤ 2 GB before session creation
+   - **NpyReader.cs** (1 method): ReadNpy() — checks NPY file ≤ 500 MB at start of parsing
+**Size Limits & Rationale:**
+   - **ONNX: 2 GB** — Qwen3-TTS models (talker_prefill ~1.2GB, talker_decode ~1.2GB, code_predictor ~400MB, vocoder ~500MB) fit with 1.7× headroom; rejects pathological files
+   - **NPY: 500 MB** — Embeddings + configs (~150-250MB aggregate) fit with 2-3× headroom; NPY = raw float data, 500MB file = 500MB memory
+**Exception Type:** InvalidOperationException with human-readable message (e.g., "ONNX file too large (2.50 GB). Maximum allowed: 2.00 GB.")
+**Test Coverage:** Tank wrote 14 boundary tests covering NPY/ONNX boundary cases (n-1, n, n+1) plus comparative limits validation.
+**Build Status:** ✅ 0 warnings, 0 errors across all projects. ✅ 39 Core tests pass, 10 VoiceCloning tests pass. ✅ No regression in SEC-1/SEC-2.
+**Files Modified:**
+   - `src/ElBruno.QwenTTS.Core/Models/LanguageModel.cs` — Size checks in 3 session factories
+   - `src/ElBruno.QwenTTS.Core/Models/Vocoder.cs` — Size check in GetSession()
+   - `src/ElBruno.QwenTTS.Core/Models/NpyReader.cs` — Size check in ReadNpy()
+   - `src/ElBruno.QwenTTS.Core.Tests/Sec3FileSizeTests.cs` — 14 new test cases (Tank)
+
+### 2026-02-28: PERF-1 Top-K Heap Speaker Similarity Search
+**Status:** ✅ Complete  
+**What:** Implemented O(k log n) Top-K heap optimization for speaker embedding similarity search as a proactive performance enhancement. Enables finding the K most similar speakers from an embedding database without full sort.
+**Implementation Details:**
+   - **SpeakerSimilaritySearch.cs** (NEW): Static FindTopK() method using internal MinHeap class for efficient Top-K tracking
+   - **Algorithm**: Min-heap maintains only K highest similarities; rejects lower values without insertion
+   - **SIMD acceleration**: TensorPrimitives.Dot() for cosine similarity, TensorPrimitives.Norm() for L2 normalization, TensorPrimitives.Divide() for unit vector computation
+   - **Normalization**: Automatic L2 normalization of both query and reference embeddings (handles unnormalized inputs gracefully)
+   - **MinHeap**: Binary heap with BubbleUp/BubbleDown operations; ExtractAll() returns results in descending similarity order
+**EmbeddingStore Integration:**
+   - **GetSpeakerEmbedding(int speakerId)**: Retrieves single speaker embedding (1024-dim) from talker_codec_embedding matrix
+   - **GetAllSpeakerEmbeddings()**: Yields all (name, embedding) tuples for similarity search iteration
+**Performance Characteristics:**
+   - **Time complexity**: O(n log k) for n speakers and k results (vs O(n log n) for full sort + take-k)
+   - **Space complexity**: O(k) heap (vs O(n) for full array sort)
+   - **Benchmark baseline**: 7.11 ms average for Top-10 from 1000 speakers with 1024-dimensional embeddings (100 iterations)
+**Test Coverage:**
+   - **11 new tests** in SpeakerSimilaritySearchTests.cs: exact match, descending order, large collection (1000 speakers), normalized/unnormalized equivalence, zero vector handling, dimension mismatch, invalid k, empty references, high-dimensional (1024-dim) correctness, benchmark baseline
+   - **Edge cases**: Zero vectors, dimension mismatches, k > n, k ≤ 0, empty collections
+   - **Total Core tests**: 50 passing (39 existing + 11 new PERF-1)
+**Use Case:**
+   - Future feature: "Find similar voices" — given a speaker embedding (from voice clone or reference), return top-K closest built-in speakers
+   - Proactive optimization: Implements efficient algorithm before feature demand, avoiding technical debt
+**Files Created:**
+   - `src/ElBruno.QwenTTS.Core/Models/SpeakerSimilaritySearch.cs` (172 lines)
+   - `src/ElBruno.QwenTTS.Core.Tests/SpeakerSimilaritySearchTests.cs` (260 lines)
+**Files Modified:**
+   - `src/ElBruno.QwenTTS.Core/Models/EmbeddingStore.cs` — Added GetSpeakerEmbedding() and GetAllSpeakerEmbeddings() methods
+**Branch:** squad/perf-1-topk-heap  
+**Closes:** Issue #22 PERF-1
+
+### 2026-02-28: PERF-2 ArrayPool Adoption in ONNX Inference Loops
+**Status:** ✅ Complete  
+**What:** Applied `ArrayPool<T>.Shared` optimizations to hot allocation paths in ONNX inference (LanguageModel.cs). Replaced heap allocations with pooled arrays to reduce GC pressure and latency variance during real-time synthesis.
+**Hot Paths Optimized:**
+   1. **Prefill stage** — Rented `flatEmbeds` (float[]), `flatMask` (long[]), `flatPosIds` (long[]) before ONNX session, returned in finally
+   2. **Decode loop** — Rented `pooledMask` (long[2048]) and `pooledCpInputs` (float[2048]) once before loop, reused per-step
+   3. **Code Predictor inner loop** — Dynamically rented `flatCpEmbeds` per group iteration with nested try-finally
+   4. **Sampling methods** — `SampleToken` and `SampleTokenSimple` now rent/return `probs` arrays with try-finally
+**Design Decisions:**
+   - Rent large buffers (mask, CP inputs) once before loops to amortize pool overhead
+   - Wrap all rental sites in try-finally to guarantee return even on early exit/exception
+   - Use `.AsMemory(0, actualSize)` to slice rented arrays to exact size needed
+   - Zero behavioral change — logic identical, only allocation strategy differs
+**Test Coverage:** ✅ All 60 tests pass (50 Core + 10 VoiceCloning) in both Debug and Release modes
+**Build Status:** ✅ 0 errors, 0 warnings across all 7 projects
+**GC Reduction:** Per-step allocations eliminated in tight decode loop (2048 iterations max); sampling arrays (~3KB-12KB) now pooled instead of heap-allocated
+**Files Modified:**
+   - `src/ElBruno.QwenTTS.Core/Models/LanguageModel.cs` — Added System.Buffers, applied ArrayPool to 3 hot paths
+**Branch:** squad/perf-2-arraypool  
+**Closes:** Issue #22 PERF-2
+### 2026-02-28: Phase 3 CI/Linux Hardening (Neo)
+**Status:** ✅ Complete  
+**What:** Implemented Phase 3 CI/Linux checklist from issue #22. Audit revealed that two of three items were already satisfied; enhanced publish workflow for robust version handling.
+**Audit Results:**
+   - **✅ [SkippableFact] for platform-conditional tests**: No tests currently use `Skip.IfNot(IsWindows())` or `Skip.If(IsLinux())` patterns. This requirement is already satisfied — no changes needed.
+   - **✅ Cross-platform file name validation**: No code in the repository uses `Path.GetInvalidFileNameChars()`. ModelDownloader and other file handling code already use safe, cross-platform patterns. No hardcoded character set needed.
+   - **✅ Publish workflow version handling**: Enhanced `.github/workflows/publish.yml` to strip both leading 'v' AND leading '.' from version tags, plus added semantic version format validation.
+**Publish Workflow Enhancements:**
+   - **Dual strip pattern**: `VERSION="${VERSION#v}"` followed by `VERSION="${VERSION#.}"` handles both `v1.0.0` → `1.0.0` and `v.1.0.0` → `1.0.0` (typo case)
+   - **Version validation step**: New step after "Determine version" validates semantic version format (MAJOR.MINOR.PATCH with optional prerelease/buildmetadata) before build starts
+   - **Fail-fast behavior**: Invalid version format (e.g., missing parts, non-numeric, malformed) causes workflow to fail immediately with clear error message and examples
+   - **Applied to all version sources**: Release tags, manual workflow_dispatch input, and csproj fallback all get sanitized
+**Cross-Platform Test Pattern Learnings:**
+   - **SkippableFact vs Fact**: On Linux, `Skip.IfNot()` throws `SkipException`. With `[Fact]`, this is a **test failure**. With `[SkippableFact]`, it's correctly recorded as **skipped**. Must use Xunit.SkippableFact NuGet package.
+   - **Path.GetInvalidFileNameChars() trap**: Returns only `\0` and `/` on Linux (vs 9+ chars on Windows). For cross-platform validation, must use hardcoded char set: `['<', '>', ':', '"', '|', '?', '*', '\\', '/', '\0']`.
+   - **CI workflow design**: Version extraction should handle user typos (v.1.0.0) gracefully; validation should fail fast before expensive build/test steps.
+**Build Status:** ✅ 0 warnings, 0 errors across all 7 projects. ✅ All 60 tests passing (50 Core + 10 VoiceCloning).
+**Files Modified:**
+   - `.github/workflows/publish.yml` — Added dual strip + validation step for version handling
+**Branch:** squad/phase-3-ci-linux  
+**Closes:** Issue #22 Phase 3 CI/Linux Checklist
+

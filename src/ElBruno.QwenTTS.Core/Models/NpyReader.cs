@@ -50,12 +50,19 @@ internal static class NpyReader
 
     private static (string dtype, int[] shape, byte[] data) ReadNpy(string path)
     {
+        // SEC-3: File size pre-check to prevent out-of-memory attacks
+        var fileInfo = new FileInfo(path);
+        const long maxNpySize = 500_000_000; // 500 MB
+        if (fileInfo.Length > maxNpySize)
+            throw new InvalidOperationException($"NPY file too large ({fileInfo.Length / 1e6:F2} MB). Maximum allowed: {maxNpySize / 1e6:F2} MB.");
+
         using var fs = File.OpenRead(path);
         
         // Read magic: 0x93 N U M P Y
         Span<byte> magic = stackalloc byte[6];
         ReadOnlySpan<byte> expected = [0x93, (byte)'N', (byte)'U', (byte)'M', (byte)'P', (byte)'Y'];
-        if (fs.Read(magic) != 6 || !magic.SequenceEqual(expected))
+        fs.ReadExactly(magic);
+        if (!magic.SequenceEqual(expected))
             throw new InvalidDataException("Not a valid NPY file (bad magic)");
 
         // Version
@@ -69,19 +76,19 @@ internal static class NpyReader
         if (major == 1)
         {
             Span<byte> lenBytes = stackalloc byte[2];
-            fs.Read(lenBytes);
+            fs.ReadExactly(lenBytes);
             headerLen = BinaryPrimitives.ReadUInt16LittleEndian(lenBytes);
         }
         else // v2
         {
             Span<byte> lenBytes = stackalloc byte[4];
-            fs.Read(lenBytes);
+            fs.ReadExactly(lenBytes);
             headerLen = (int)BinaryPrimitives.ReadUInt32LittleEndian(lenBytes);
         }
 
         // Read header dict (ASCII Python literal)
         var headerBytes = new byte[headerLen];
-        fs.Read(headerBytes);
+        fs.ReadExactly(headerBytes);
         var header = Encoding.ASCII.GetString(headerBytes).Trim();
 
         // Parse header dict {'descr': '<f4', 'fortran_order': False, 'shape': (N,M), }
@@ -101,7 +108,7 @@ internal static class NpyReader
         
         int totalElements = shape.Aggregate(1, (a, b) => a * b);
         var data = new byte[totalElements * elementSize];
-        fs.Read(data);
+        fs.ReadExactly(data);
 
         return (dtype, shape, data);
     }

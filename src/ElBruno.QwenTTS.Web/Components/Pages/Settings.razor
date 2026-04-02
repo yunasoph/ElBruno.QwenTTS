@@ -58,7 +58,7 @@
                 {
                     <button class="btn btn-sm btn-primary mt-2" @onclick="LoadTtsModel" disabled="@_ttsLoading">
                         @if (_ttsLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                        ⬇️ Download & Load (~5.5 GB)
+                        ⬇️ Download & Load (@(Tts.ModelVariant == QwenModelVariant.Qwen17B ? "~10 GB" : "~5.5 GB"))
                     </button>
                 }
 

@@ -33,7 +33,7 @@
             {
                 <h3>📦 TTS Model Not Found</h3>
                 <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.5rem;">
-                    The CustomVoice model (~5.5 GB) needs to be downloaded from HuggingFace before you can generate speech.
+                    The CustomVoice model (@(Tts.ModelVariant == QwenModelVariant.Qwen17B ? "~10 GB" : "~5.5 GB")) needs to be downloaded from HuggingFace before you can generate speech.
                 </div>
                 <div class="settings-meta" style="margin-bottom:0.75rem;">
                     <span class="label-muted">Location:</span>
@@ -53,7 +53,7 @@
                     }
                     else
                     {
-                        <span>Preparing to download model from HuggingFace (~5.5 GB)...</span>
+                        <span>Preparing to download model from HuggingFace (@(Tts.ModelVariant == QwenModelVariant.Qwen17B ? "~10 GB" : "~5.5 GB"))...</span>
                     }
                 </div>
             }
@@ -382,7 +382,7 @@
 
                 var progress = new Progress<string>(msg =>
                 {
-                    InvokeAsync(() => { Log(msg); StateHasChanged(); ScrollConsole(); });
+                    InvokeAsync(async () => { Log(msg); StateHasChanged(); await ScrollConsole(); });
                 });
 
                 var segSw = System.Diagnostics.Stopwatch.StartNew();
