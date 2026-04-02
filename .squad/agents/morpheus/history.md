@@ -49,3 +49,7 @@ Project published to https://github.com/elbruno/qwen-labs-cs (private). 8/12 tas
 ### 2026-04-02T16:43Z: 1.7B Model Support Recommendation — Ready for Phase 1
 
 📌 Team update (2026-04-02T16:43Z): Complete scope assessment delivered. 1.7B support is MEDIUM effort (1-2 days), non-breaking, high user value (instruction control). Phase 1 MVP targets: (1) LanguageModel.cs dimension-agnostic refactor, (2) ModelDownloader.cs enum-based variant selection, (3) 1.7B ONNX export + HuggingFace upload, (4) unit tests, (5) docs update. Awaiting maintainer approval. — Morpheus
+
+### 2026-04-02: Phase 1 Code Review — APPROVED
+
+📌 Review (Morpheus): Full Phase 1 implementation reviewed and approved. Architecture is clean — QwenModelVariant enum handles download/storage, config.json handles runtime dimensions, .npy shapes provide ground truth. Zero hardcoded constants in inference code. Backward compatibility perfect (Qwen06B=0, legacy paths preserved). Build clean (0 errors), 88 tests pass. One latent risk identified: CP input dimension for 1.7B — `_cpHiddenSize` (1024) is used to truncate `_hiddenSize` (2048) hidden states at LanguageModel.cs:187-192. Whether truncation vs projection is correct depends on `small_to_mtp_projection.in_features` in the 1.7B model weights, which can only be verified during Phase 2 ONNX export. Not a current bug — 0.6B is unaffected. Phase 2 action: Trinity must validate CP input dimension when exporting 1.7B.

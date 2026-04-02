@@ -73,3 +73,18 @@ TextTokenizer.cs and Vocoder.cs are fully implemented. LanguageModel.cs is a ske
 **Architecture decision:** Runtime dimensions come from config.json (loaded in EmbeddingStore), not from the variant enum. The enum drives download/storage only. This means any future model variant with different dimensions just needs correct npy/config files — no C# code changes.
 
 📌 Team update (2026-04-02T1719): Phase 1 complete — multi-variant support (0.6B and 1.7B) implemented across C#, Python, and tests. Orchestration logs and decisions merged. Non-breaking change, 88 tests pass. — Scribe
+
+### 2026-04-02: Instruction Control API + Consumer App Updates (Phase 2)
+**By:** Neo (.NET Developer)
+**What:** Added variant-aware instruction control support across the full stack. When using the 1.7B model, users can pass natural language style instructions (e.g., "Read with a calm, warm tone") that get included in the TTS prompt. The 0.6B model gracefully ignores instruct text with a warning.
+**Key changes:**
+- **QwenModelVariantConfig** — Added `SupportsInstruct(variant)` helper method returning true only for 1.7B+.
+- **QwenTtsOptions** — Added `InstructText` property for default instruction text.
+- **TtsPipeline** — Now stores `_variant` field, exposes `ModelVariant` property. `SynthesizeAsync()` checks variant and nullifies instruct with a warning when used with 0.6B. Both `CreateAsync()` overloads pass variant to constructor.
+- **ITtsPipeline** — Added `ModelVariant` property to interface.
+- **CLI app** — Added `--variant` argument (accepts "0.6b", "1.7b"). Added `--instruct` already existed. Added help text for all options.
+- **FileReader app** — Added `--variant` argument with same parsing. Updated usage help.
+- **Web TtsPipelineService** — Reads `TTS:Variant` from config. Exposes `ModelVariant` and `SupportsInstruct` properties. Passes variant through to `TtsPipeline.CreateAsync()`.
+- **Web Home.razor** — Instruct input field is disabled when variant doesn't support it. Shows model variant badge and instruction support status.
+- **Web Settings.razor** — Shows model variant and instruction support in status table.
+**Backward compat:** 100%. Default variant remains 0.6B. No instruct = identical behavior. 88 tests pass (78 Core + 10 VoiceCloning). Build clean.
