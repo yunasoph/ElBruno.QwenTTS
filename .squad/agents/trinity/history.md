@@ -105,3 +105,24 @@ def forward(self, codes):  # (B, 16, T) int64
 
 ### 2026-02-21: GPU Handoff
 All Python export scripts are written and committed. None have been run yet — they need model weights downloaded first. On the GPU machine, run `download_models.py` first, then export scripts in order: vocoder → LM → embeddings → tokenizer. Watch for attribute path issues in export_lm.py — the model attribute discovery code has fallbacks but may need adjustment.
+
+### 2026-02-22: Qwen3-TTS 1.7B Technical Viability Analysis
+
+**Issue #26 analysis complete.** The 1.7B model is architecturally compatible with our 0.6B ONNX pipeline — only the Talker LM hidden size changes (1024→2048). Code Predictor (1024), vocoder, tokenizer, and speaker inventory remain identical.
+
+**Key findings:**
+- **Model variants:** 0.6B has Base+CustomVoice (no instruct). 1.7B has Base+CustomVoice+VoiceDesign (both with instruct). "Instruct" means natural-language style control (emotion, rate, timbre), not GPT-style instructions.
+- **Architecture:** Only `talker_config.hidden_size` (1024→2048) and `intermediate_size` (3072→6144) differ. Everything else (28 layers, 16 heads, 8 KV heads, head_dim=128, 16 code groups) is identical.
+- **Parameter count:** 0.6B = ~458M params (~1.8 GB FP32). 1.7B = ~1344M params (~5.4 GB FP32). Delta: +886M params (+3.5 GB).
+- **ONNX export feasibility:** Fully compatible. `python/export_lm.py` hardcodes `TALKER_HIDDEN = 1024` at line 29 — needs to read `model.config.talker_config.hidden_size` dynamically. No fundamental blockers.
+- **C# changes required:** `LanguageModel.cs` and `EmbeddingStore.cs` have ~100+ hardcoded `1024` references in buffer allocations. Solution: add `HiddenSize` property to config, replace all `1024` with `config.Talker.HiddenSize`.
+- **Resource requirements:** 16 GB RAM minimum for 1.7B (vs 8 GB for 0.6B). Inference ~2-2.5× slower. KV cache size per token is identical (224 KB) since head structure doesn't change.
+- **Implementation effort:** 8-12 hours for MVP (config-driven exporters + C# refactor + validation).
+
+**Documentation:** Full analysis written to `.squad/decisions/inbox/trinity-17b-viability.md` (16 KB, 9 sections covering variants, instruct semantics, architecture diffs, ONNX export, resource requirements, code changes, testing strategy, risks, recommendations).
+
+**Next steps:** Pending team decision. If approved, Phase 1 = make Python exporters config-driven → export 1.7B → refactor C# to be dimension-agnostic → add model size selection to TtsPipeline.
+
+### 2026-04-02T16:43Z: 1.7B Viability Analysis Complete & Approved for Implementation
+
+📌 Team update (2026-04-02T16:43Z): Orchestration logs and decision consolidation complete. Both Trinity and Morpheus recommend pursuing Phase 1 1.7B support (8-12 hours MVP). Non-breaking change, high user value (instruction control). Awaiting maintainer approval to start Phase 1 implementation. — Scribe
