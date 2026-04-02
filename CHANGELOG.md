@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-04-02
+
 ### Added
 
 - **Qwen3-TTS 1.7B model support** — run either 0.6B or 1.7B model variant ([#26](https://github.com/elbruno/ElBruno.QwenTTS/issues/26))
