@@ -163,5 +163,45 @@ This pattern should be reused if any new export scripts are added.
 - `patch_models_for_dml.py` — auto-detects dimensions from ONNX graph
 
 **0.6B backward compatibility:** All scripts retain 0.6B as default. Running without args produces identical behavior to before.
-
+
 📌 Team update (2026-04-02T1719): Phase 1 complete — multi-variant support (0.6B and 1.7B) implemented across C#, Python, and tests. Orchestration logs and decisions merged. Non-breaking change, 88 tests pass. — Scribe
+
+### 2026-04-02: Full 1.7B ONNX Export Pipeline — Complete
+
+**Environment:** NVIDIA A10-24Q (24 GB VRAM), Python 3.13.9, PyTorch 2.6.0+cu124, transformers 4.57.3, onnx 1.20.1
+
+**Model:** Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice (3.57 GB safetensors, BF16)
+
+**Exported artifacts (all to `python/onnx_1.7b/`):**
+
+| File | Size | Notes |
+|------|------|-------|
+| `talker_prefill.onnx` + `.data` | 2.7 MB + 5.27 GB | 28 layers, hidden=2048 |
+| `talker_decode.onnx` + `.data` | 2.7 MB + 5.27 GB | Same weights, decode-step graph |
+| `code_predictor.onnx` + `.data` | 0.2 MB + 428 MB | 5 layers, hidden=1024 (unchanged from 0.6B) |
+| `vocoder.onnx` | 436 MB | Shared across 0.6B/1.7B, validated (max err 2.5e-5) |
+| `embeddings/*.npy` + config | ~1.5 GB total | 15 CP embeddings (2048×2048), text_embedding (151936×2048) |
+| `tokenizer/` | ~4 MB | Shared vocab.json + merges.txt |
+
+**Total export size: ~12.8 GB** (vs ~5.5 GB for 0.6B — roughly 2.3× larger)
+
+**Issues encountered and fixed:**
+
+1. **vmap masking incompatibility (transformers 4.57.3):** `torch.onnx.export` trace fails with `RuntimeError: invalid unordered_map<K, T> key` because transformers' `masking_utils.py` uses `torch.vmap` for causal mask creation, which is incompatible with JIT tracing. **Fix:** Use `reexport_lm_novmap.py` which registers `sdpa_without_vmap` from `transformers.integrations.executorch`. Applied same fix to `export_vocoder.py`.
+
+2. **Code Predictor dummy input dimension bug (1.7B-only):** `export_lm.py` and `reexport_lm_novmap.py` created dummy CP inputs with `dims["cp_hidden"]` (1024), but `small_to_mtp_projection` expects `talker_hidden` (2048) as input. For 0.6B both are 1024 so it worked; for 1.7B it's a shape mismatch. **Fix:** Changed to `dims["talker_hidden"]` in both scripts.
+
+3. **ONNX external data scatter:** `torch.onnx.export` creates hundreds of individual tensor files. The original `fix_external_data_ref()` only renamed references without consolidating data, breaking the model. **Fix:** Replaced with `consolidate_external_data()` that loads all scattered data, then saves with `all_tensors_to_one_file=True`.
+
+**Validation results:**
+- Vocoder: ONNX vs PyTorch max error = 2.51e-5, mean error = 6.64e-7 ✓ PASS
+- LM models: Trace completed cleanly for all 3 (prefill, decode, code predictor)
+- Config.json verified: talker hidden_size=2048, cp hidden_size=1024
+
+**Upload:** All artifacts uploaded to `elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX` on HuggingFace.
+
+**Script changes committed:**
+- `export_lm.py`: Fixed CP dummy input dimension (talker_hidden, not cp_hidden)
+- `reexport_lm_novmap.py`: Fixed CP dummy input + replaced broken `fix_external_data_ref` with `consolidate_external_data`
+- `export_vocoder.py`: Added vmap-free masking patch + `--output-dir` flag
+- `upload_to_hf.py`: Auto-detect model variant from config.json for README generation

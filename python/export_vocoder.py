@@ -23,6 +23,13 @@ import numpy as np
 import torch
 from pathlib import Path
 
+# Register vmap-free masking for ONNX export compatibility with transformers 4.57+
+from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+from transformers.integrations.executorch import sdpa_mask_without_vmap
+ALL_MASK_ATTENTION_FUNCTIONS.register('sdpa_without_vmap', sdpa_mask_without_vmap)
+ALL_ATTENTION_FUNCTIONS.register('sdpa_without_vmap', ALL_ATTENTION_FUNCTIONS['sdpa'])
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -48,6 +55,13 @@ def load_decoder(local_dir: str | None = None):
     model = Qwen3TTSTokenizerV2Model.from_pretrained(repo, config=config)
     decoder = model.decoder
     decoder.eval()
+    # Patch transformer layers for vmap-free masking (ONNX trace compatibility)
+    if hasattr(decoder, 'pre_transformer'):
+        decoder.pre_transformer.config._attn_implementation = 'sdpa_without_vmap'
+        if hasattr(decoder.pre_transformer, 'layers'):
+            for layer in decoder.pre_transformer.layers:
+                if hasattr(layer, 'self_attn'):
+                    layer.self_attn.config._attn_implementation = 'sdpa_without_vmap'
     print(f"  Decoder class: {type(decoder).__name__}")
     print(f"  Total upsample factor: {decoder.total_upsample}")
     return decoder
@@ -188,6 +202,10 @@ def parse_args():
         help="Local directory with model weights (default: download from HF)",
     )
     p.add_argument(
+        "--output-dir", type=str, default=None,
+        help="Directory to save vocoder.onnx (default: onnx_models/)",
+    )
+    p.add_argument(
         "--skip-validate", action="store_true",
         help="Skip ONNX Runtime validation after export",
     )
@@ -195,7 +213,12 @@ def parse_args():
 
 
 def main():
+    global ONNX_OUTPUT_DIR, ONNX_OUTPUT_PATH
     args = parse_args()
+
+    if args.output_dir:
+        ONNX_OUTPUT_DIR = Path(args.output_dir)
+        ONNX_OUTPUT_PATH = ONNX_OUTPUT_DIR / "vocoder.onnx"
 
     print("=" * 60)
     print("Qwen3-TTS Vocoder Decoder → ONNX Export")

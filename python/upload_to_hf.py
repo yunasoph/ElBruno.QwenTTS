@@ -101,6 +101,29 @@ def main():
                 repo_id=args.repo_id,
             )
 
+    # Read model config for README generation
+    import json
+    config_path = embeddings_dir / "config.json" if embeddings_dir.exists() else None
+    model_hidden = 1024
+    if config_path and config_path.exists():
+        with open(config_path) as f:
+            cfg = json.load(f)
+        model_hidden = cfg.get("talker", {}).get("hidden_size", 1024)
+    variant = "1.7B" if model_hidden >= 2048 else "0.6B"
+    base_model_name = f"Qwen/Qwen3-TTS-12Hz-{variant}-CustomVoice"
+
+    # Compute actual file sizes for README
+    def get_size_str(path):
+        if path.exists():
+            sz = path.stat().st_size / (1024**3)
+            return f"~{sz:.1f} GB" if sz >= 1 else f"~{int(sz*1024)} MB"
+        return "N/A"
+
+    prefill_sz = get_size_str(onnx_dir / "talker_prefill.onnx.data")
+    decode_sz = get_size_str(onnx_dir / "talker_decode.onnx.data")
+    cp_sz = get_size_str(onnx_dir / "code_predictor.onnx.data") if (onnx_dir / "code_predictor.onnx.data").exists() else get_size_str(onnx_dir / "code_predictor.onnx")
+    voc_sz = get_size_str(onnx_dir / "vocoder.onnx")
+
     # Upload a README model card
     readme = f"""---
 license: apache-2.0
@@ -109,21 +132,21 @@ tags:
   - tts
   - qwen3-tts
   - text-to-speech
-base_model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+base_model: {base_model_name}
 ---
 
-# Qwen3-TTS 12Hz 0.6B CustomVoice — ONNX
+# Qwen3-TTS 12Hz {variant} CustomVoice — ONNX
 
-ONNX export of [Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice) for local inference with C# / ONNX Runtime.
+ONNX export of [{base_model_name}](https://huggingface.co/{base_model_name}) for local inference with C# / ONNX Runtime.
 
 ## Files
 
 | File | Description | Size |
 |------|-------------|------|
-| `talker_prefill.onnx` + `.data` | Talker LM prefill (28 layers) | ~1.7 GB |
-| `talker_decode.onnx` + `.data` | Talker LM single-step decode | ~1.7 GB |
-| `code_predictor.onnx` | Code Predictor (5 layers, 15 groups) | ~420 MB |
-| `vocoder.onnx` + `.data` | Vocoder decoder (24kHz output) | ~437 MB |
+| `talker_prefill.onnx` + `.data` | Talker LM prefill (28 layers, hidden={model_hidden}) | {prefill_sz} |
+| `talker_decode.onnx` + `.data` | Talker LM single-step decode | {decode_sz} |
+| `code_predictor.onnx` + `.data` | Code Predictor (5 layers, 15 groups) | {cp_sz} |
+| `vocoder.onnx` | Vocoder decoder (24kHz output) | {voc_sz} |
 | `embeddings/` | Text/codec embeddings as .npy + config | ~1.4 GB |
 | `tokenizer/` | BPE tokenizer (vocab.json, merges.txt) | ~4 MB |
 
@@ -143,8 +166,8 @@ dotnet run --project src/QwenTTS -- --model-dir python/onnx_runtime --text "Hell
 
 ## Architecture
 
-- **Talker**: 28 transformer layers, 16 attn heads, 8 KV heads, hidden=1024
-- **Code Predictor**: 5 layers, generates codebook groups 1-15
+- **Talker**: 28 transformer layers, 16 attn heads, 8 KV heads, hidden={model_hidden}
+- **Code Predictor**: 5 layers, hidden=1024, generates codebook groups 1-15
 - **Vocoder**: RVQ dequantize → transformer → BigVGAN decoder, 12Hz → 24kHz (1920× upsample)
 - **KV Cache**: Decode uses stacked format (num_layers, B, num_kv_heads, T, head_dim)
 - **Speakers**: serena, vivian, uncle_fu, ryan, aiden, ono_anna, sohee, eric, dylan

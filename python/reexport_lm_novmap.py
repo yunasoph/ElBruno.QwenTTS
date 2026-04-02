@@ -141,16 +141,27 @@ def patch_model_for_vmap_free(model):
         layer.self_attn.config._attn_implementation = 'sdpa_without_vmap'
 
 
-def fix_external_data_ref(onnx_path):
-    """Ensure external data references use the correct filename."""
+def consolidate_external_data(onnx_path):
+    """Load ONNX model with scattered external data and consolidate into one .data file."""
     import onnx
-    model = onnx.load(onnx_path, load_external_data=False)
-    expected_data = os.path.basename(onnx_path) + '.data'
-    for tensor in model.graph.initializer:
-        for entry in tensor.external_data:
-            if entry.key == 'location':
-                entry.value = expected_data
-    onnx.save(model, onnx_path)
+    import glob
+    data_file = os.path.basename(onnx_path) + '.data'
+    model = onnx.load(onnx_path, load_external_data=True)
+    # Remove scattered files before saving consolidated
+    directory = os.path.dirname(onnx_path)
+    for f in os.listdir(directory):
+        fp = os.path.join(directory, f)
+        if os.path.isfile(fp) and not f.endswith(('.onnx', '.onnx.data', '.npy', '.json', '.py')):
+            os.remove(fp)
+    onnx.save_model(
+        model, onnx_path,
+        save_as_external_data=True,
+        all_tensors_to_one_file=True,
+        location=data_file,
+        size_threshold=1024,
+    )
+    sz = os.path.getsize(os.path.join(directory, data_file))
+    print(f"  Consolidated → {data_file} ({sz / (1024**3):.2f} GB)")
 
 
 def export_prefill(talker, output_dir, dims):
@@ -182,7 +193,7 @@ def export_prefill(talker, output_dir, dims):
         input_names=input_names, output_names=output_names,
         dynamic_axes=dynamic_axes, opset_version=OPSET_VERSION,
         do_constant_folding=True)
-    fix_external_data_ref(path)
+    consolidate_external_data(path)
     print("  Done")
 
 
@@ -215,7 +226,7 @@ def export_decode(talker, output_dir, dims):
         input_names=input_names, output_names=output_names,
         dynamic_axes=dynamic_axes, opset_version=OPSET_VERSION,
         do_constant_folding=True)
-    fix_external_data_ref(path)
+    consolidate_external_data(path)
     print("  Done")
 
 
@@ -224,7 +235,7 @@ def export_code_predictor(talker, output_dir, dims):
     wrapper = CodePredictorWrapper(talker.code_predictor, dims["cp_num_layers"]).eval()
     B, S, T_past = 1, 2, 2
     dummy = (
-        torch.randn(B, S, dims["cp_hidden"]),
+        torch.randn(B, S, dims["talker_hidden"]),
         torch.tensor([0], dtype=torch.int64),
         torch.randn(dims["cp_num_layers"], B, dims["cp_num_kv_heads"], T_past, dims["cp_head_dim"]),
         torch.randn(dims["cp_num_layers"], B, dims["cp_num_kv_heads"], T_past, dims["cp_head_dim"]),
@@ -245,7 +256,7 @@ def export_code_predictor(talker, output_dir, dims):
         input_names=input_names, output_names=output_names,
         dynamic_axes=dynamic_axes, opset_version=OPSET_VERSION,
         do_constant_folding=True, dynamo=False)
-    fix_external_data_ref(path)
+    consolidate_external_data(path)
     print("  Done")
 
 
