@@ -4,10 +4,14 @@ Export Talker LM (prefill + decode) and Code Predictor to ONNX.
 Creates three ONNX models:
   1. talker_prefill.onnx  — Talker LM prefill (full sequence, produces KV cache)
   2. talker_decode.onnx   — Talker LM single-step decode (with KV cache I/O)
-  3. code_predictor.onnx  — Code Predictor (31-step codebook generation)
+  3. code_predictor.onnx  — Code Predictor (codebook generation)
+
+All dimensions are read from the model config, so both 0.6B and 1.7B variants
+are supported without code changes.
 
 Usage:
   python export_lm.py --model-dir models/Qwen3-TTS-0.6B-CustomVoice --output-dir onnx/
+  python export_lm.py --model-dir models/Qwen3-TTS-1.7B-CustomVoice --output-dir onnx_1.7b/
 """
 
 import argparse
@@ -20,23 +24,33 @@ from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGenera
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from transformers.cache_utils import DynamicCache
 
-# ---------------------------------------------------------------------------
-# Model constants (0.6B CustomVoice defaults from config)
-# ---------------------------------------------------------------------------
-TALKER_NUM_LAYERS = 28
-TALKER_NUM_KV_HEADS = 8
-TALKER_HEAD_DIM = 128
-TALKER_HIDDEN = 1024
-TALKER_VOCAB = 3072
-
-CP_NUM_LAYERS = 5
-CP_NUM_KV_HEADS = 8
-CP_HEAD_DIM = 128
-CP_HIDDEN = 1024
-CP_VOCAB = 2048
-CP_NUM_GROUPS = 15  # codebook groups 1-15 (group 0 is in the Talker)
-
 OPSET_VERSION = 17
+
+
+def read_model_dims(config):
+    """Extract export-relevant dimensions from model config.
+
+    Works for any Qwen3-TTS model variant (0.6B, 1.7B, etc.)."""
+    tc = config.talker_config
+    cp = tc.code_predictor_config
+    dims = {
+        "talker_num_layers": tc.num_hidden_layers,
+        "talker_num_kv_heads": tc.num_key_value_heads,
+        "talker_head_dim": getattr(tc, "head_dim", 128),
+        "talker_hidden": tc.hidden_size,
+        "talker_vocab": tc.vocab_size,
+        "cp_num_layers": cp.num_hidden_layers,
+        "cp_num_kv_heads": cp.num_key_value_heads,
+        "cp_head_dim": getattr(cp, "head_dim", 128),
+        "cp_hidden": cp.hidden_size,
+        "cp_vocab": cp.vocab_size,
+        "cp_num_groups": tc.num_code_groups - 1,
+    }
+    print(f"  Talker:  hidden={dims['talker_hidden']}, layers={dims['talker_num_layers']}, "
+          f"kv_heads={dims['talker_num_kv_heads']}, head_dim={dims['talker_head_dim']}")
+    print(f"  CodePred: hidden={dims['cp_hidden']}, layers={dims['cp_num_layers']}, "
+          f"kv_heads={dims['cp_num_kv_heads']}, groups={dims['cp_num_groups']}")
+    return dims
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -44,25 +58,16 @@ OPSET_VERSION = 17
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TalkerPrefillWrapper(nn.Module):
-    """
-    Wraps the Talker LM for prefill export.
+    """Wraps the Talker LM for prefill export.
 
-    Inputs:
-      - inputs_embeds:  (B, T, 1024) float32
-      - attention_mask:  (B, T) int64
-      - position_ids:    (3, B, T) int64   — M-RoPE temporal/height/width
-
-    Outputs:
-      - logits:          (B, 1, 3072) float32  — last-token logits
-      - hidden_states:   (B, T, 1024) float32  — full hidden for code predictor
-      - present_key_values: 20 layers × [key (B,2,T,128), value (B,2,T,128)]
-        flattened as: present_key_0, present_value_0, ..., present_key_19, present_value_19
+    Dimensions vary by model variant (0.6B: hidden=1024, 1.7B: hidden=2048).
     """
 
-    def __init__(self, talker):
+    def __init__(self, talker, num_layers):
         super().__init__()
-        self.model = talker.model  # Qwen3TTSTalkerModel
+        self.model = talker.model
         self.codec_head = talker.codec_head
+        self.num_layers = num_layers
 
     def forward(self, inputs_embeds, attention_mask, position_ids):
         outputs = self.model(
@@ -76,7 +81,7 @@ class TalkerPrefillWrapper(nn.Module):
 
         cache = outputs.past_key_values
         flat_kv = []
-        for i in range(TALKER_NUM_LAYERS):
+        for i in range(self.num_layers):
             flat_kv.append(cache.layers[i].keys)
             flat_kv.append(cache.layers[i].values)
 
@@ -88,32 +93,17 @@ class TalkerPrefillWrapper(nn.Module):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TalkerDecodeWrapper(nn.Module):
-    """
-    Wraps the Talker LM for single-token decode export.
+    """Wraps the Talker LM for single-token decode export."""
 
-    Inputs:
-      - inputs_embeds:   (B, 1, 1024) float32
-      - attention_mask:  (B, T+1) int64
-      - position_ids:    (3, B, 1) int64
-      - past_keys:       (num_layers, B, num_kv_heads, T, head_dim) float32
-      - past_values:     (num_layers, B, num_kv_heads, T, head_dim) float32
-
-    Outputs:
-      - logits:          (B, 1, 3072) float32
-      - hidden_states:   (B, 1, 1024) float32
-      - present_keys:    (num_layers, B, num_kv_heads, T+1, head_dim) float32
-      - present_values:  (num_layers, B, num_kv_heads, T+1, head_dim) float32
-    """
-
-    def __init__(self, talker):
+    def __init__(self, talker, num_layers):
         super().__init__()
         self.model = talker.model
         self.codec_head = talker.codec_head
+        self.num_layers = num_layers
 
     def forward(self, inputs_embeds, attention_mask, position_ids, past_keys, past_values):
-        # Reconstruct DynamicCache from stacked KV tensors
         cache = DynamicCache()
-        for i in range(TALKER_NUM_LAYERS):
+        for i in range(self.num_layers):
             cache.update(past_keys[i], past_values[i], i)
 
         outputs = self.model(
@@ -127,8 +117,8 @@ class TalkerDecodeWrapper(nn.Module):
         logits = self.codec_head(hidden_states)
 
         new_cache = outputs.past_key_values
-        present_keys = torch.stack([new_cache.layers[i].keys for i in range(TALKER_NUM_LAYERS)])
-        present_values = torch.stack([new_cache.layers[i].values for i in range(TALKER_NUM_LAYERS)])
+        present_keys = torch.stack([new_cache.layers[i].keys for i in range(self.num_layers)])
+        present_values = torch.stack([new_cache.layers[i].values for i in range(self.num_layers)])
 
         return (logits, hidden_states, present_keys, present_values)
 
@@ -138,45 +128,27 @@ class TalkerDecodeWrapper(nn.Module):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class CodePredictorWrapper(nn.Module):
-    """
-    Wraps the Code Predictor for ONNX export.
+    """Wraps the Code Predictor for ONNX export.
 
-    The Code Predictor has 31 separate lm_head layers (one per codebook group).
-    We stack all weights into a single tensor and use index_select for dynamic
-    routing based on generation_steps.
-
-    Inputs:
-      - inputs_embeds:    (B, S, 1024) float32
-            S=2 for prefill [talker_hidden, group_0_embed], S=1 for decode
-      - generation_steps: (1,) int64  — which lm_head to use (0..30 → groups 1..31)
-      - past_keys:        (num_layers, B, num_kv_heads, S_past, head_dim) float32
-      - past_values:      (num_layers, B, num_kv_heads, S_past, head_dim) float32
-            Pass zero-length (num_layers, B, 8, 0, 128) tensors for the first call.
-
-    Outputs:
-      - logits:           (B, S_out, 2048) float32
-      - present_keys:     (num_layers, B, num_kv_heads, S_total, head_dim) float32
-      - present_values:   (num_layers, B, num_kv_heads, S_total, head_dim) float32
+    Stacks all lm_head weights into a single tensor for indexed access.
     """
 
-    def __init__(self, code_predictor):
+    def __init__(self, code_predictor, num_layers):
         super().__init__()
-        self.model = code_predictor.model  # Qwen3TTSTalkerCodePredictorModel
+        self.model = code_predictor.model
         self.projection = code_predictor.small_to_mtp_projection
+        self.num_layers = num_layers
 
-        # Stack all 31 lm_head weight matrices for indexed access
-        # Each lm_head[i] is nn.Linear(1024, 2048, bias=False)
         all_weights = torch.stack(
             [head.weight for head in code_predictor.lm_head]
-        )  # (31, 2048, 1024)
+        )
         self.register_buffer("lm_head_weights", all_weights)
 
     def forward(self, inputs_embeds, generation_steps, past_keys, past_values):
         inputs_embeds = self.projection(inputs_embeds)
 
-        # Reconstruct DynamicCache from stacked KV tensors
         cache = DynamicCache()
-        for i in range(CP_NUM_LAYERS):
+        for i in range(self.num_layers):
             cache.update(past_keys[i], past_values[i], i)
 
         outputs = self.model(
@@ -186,16 +158,15 @@ class CodePredictorWrapper(nn.Module):
         )
         hidden_states = outputs.last_hidden_state
 
-        # Select the correct lm_head by generation_steps index
         weight = torch.index_select(
             self.lm_head_weights, 0, generation_steps.view(-1)
-        )  # (1, 2048, 1024)
-        weight = weight.squeeze(0)  # (2048, 1024)
-        logits = torch.matmul(hidden_states, weight.t())  # (B, S, 2048)
+        )
+        weight = weight.squeeze(0)
+        logits = torch.matmul(hidden_states, weight.t())
 
         new_cache = outputs.past_key_values
-        present_keys = torch.stack([new_cache.layers[i].keys for i in range(CP_NUM_LAYERS)])
-        present_values = torch.stack([new_cache.layers[i].values for i in range(CP_NUM_LAYERS)])
+        present_keys = torch.stack([new_cache.layers[i].keys for i in range(self.num_layers)])
+        present_values = torch.stack([new_cache.layers[i].values for i in range(self.num_layers)])
 
         return (logits, present_keys, present_values)
 
@@ -230,21 +201,21 @@ def _kv_dynamic_axes(names, batch_dim=0, seq_dim=2):
     return axes
 
 
-def export_talker_prefill(talker, output_dir, device):
+def export_talker_prefill(talker, output_dir, device, dims):
     """Export Talker LM prefill model to ONNX."""
     print("Exporting talker_prefill.onnx ...")
-    wrapper = TalkerPrefillWrapper(talker).eval().to(device)
+    wrapper = TalkerPrefillWrapper(talker, dims["talker_num_layers"]).eval().to(device)
 
     B, T = 1, 8  # dummy dimensions
     dummy_inputs = (
-        torch.randn(B, T, TALKER_HIDDEN, device=device),
+        torch.randn(B, T, dims["talker_hidden"], device=device),
         torch.ones(B, T, dtype=torch.int64, device=device),
         torch.zeros(3, B, T, dtype=torch.int64, device=device),
     )
 
     input_names = ["inputs_embeds", "attention_mask", "position_ids"]
     output_names = ["logits", "hidden_states"]
-    kv_out_names = _kv_output_names("present", TALKER_NUM_LAYERS)
+    kv_out_names = _kv_output_names("present", dims["talker_num_layers"])
     output_names.extend(kv_out_names)
 
     dynamic_axes = {
@@ -271,23 +242,25 @@ def export_talker_prefill(talker, output_dir, device):
     print("  ✓ talker_prefill.onnx")
 
 
-def export_talker_decode(talker, output_dir, device):
+def export_talker_decode(talker, output_dir, device, dims):
     """Export Talker LM decode-step model to ONNX."""
     print("Exporting talker_decode.onnx ...")
-    wrapper = TalkerDecodeWrapper(talker).eval().to(device)
+    wrapper = TalkerDecodeWrapper(talker, dims["talker_num_layers"]).eval().to(device)
 
     B, T_past = 1, 8  # dummy past length
 
-    dummy_embeds = torch.randn(B, 1, TALKER_HIDDEN, device=device)
+    dummy_embeds = torch.randn(B, 1, dims["talker_hidden"], device=device)
     dummy_mask = torch.ones(B, T_past + 1, dtype=torch.int64, device=device)
     dummy_pos = torch.zeros(3, B, 1, dtype=torch.int64, device=device)
 
     # Stacked KV cache: (num_layers, B, num_kv_heads, T, head_dim)
     dummy_past_keys = torch.randn(
-        TALKER_NUM_LAYERS, B, TALKER_NUM_KV_HEADS, T_past, TALKER_HEAD_DIM, device=device
+        dims["talker_num_layers"], B, dims["talker_num_kv_heads"],
+        T_past, dims["talker_head_dim"], device=device
     )
     dummy_past_values = torch.randn(
-        TALKER_NUM_LAYERS, B, TALKER_NUM_KV_HEADS, T_past, TALKER_HEAD_DIM, device=device
+        dims["talker_num_layers"], B, dims["talker_num_kv_heads"],
+        T_past, dims["talker_head_dim"], device=device
     )
 
     dummy_inputs = (dummy_embeds, dummy_mask, dummy_pos, dummy_past_keys, dummy_past_values)
@@ -320,23 +293,25 @@ def export_talker_decode(talker, output_dir, device):
     print("  ✓ talker_decode.onnx")
 
 
-def export_code_predictor(talker, output_dir, device):
+def export_code_predictor(talker, output_dir, device, dims):
     """Export Code Predictor model to ONNX."""
     print("Exporting code_predictor.onnx ...")
-    wrapper = CodePredictorWrapper(talker.code_predictor).eval().to(device)
+    wrapper = CodePredictorWrapper(talker.code_predictor, dims["cp_num_layers"]).eval().to(device)
 
     B, S = 1, 2  # prefill: [talker_hidden, group_0_embed]
     T_past = 2   # small past length for export tracing
 
-    dummy_embeds = torch.randn(B, S, CP_HIDDEN, device=device)
+    dummy_embeds = torch.randn(B, S, dims["cp_hidden"], device=device)
     dummy_steps = torch.tensor([0], dtype=torch.int64, device=device)
 
     # Stacked KV cache: (num_layers, B, num_kv_heads, T_past, head_dim)
     dummy_past_keys = torch.randn(
-        CP_NUM_LAYERS, B, CP_NUM_KV_HEADS, T_past, CP_HEAD_DIM, device=device
+        dims["cp_num_layers"], B, dims["cp_num_kv_heads"],
+        T_past, dims["cp_head_dim"], device=device
     )
     dummy_past_values = torch.randn(
-        CP_NUM_LAYERS, B, CP_NUM_KV_HEADS, T_past, CP_HEAD_DIM, device=device
+        dims["cp_num_layers"], B, dims["cp_num_kv_heads"],
+        T_past, dims["cp_head_dim"], device=device
     )
 
     dummy_inputs = (dummy_embeds, dummy_steps, dummy_past_keys, dummy_past_values)
@@ -401,6 +376,10 @@ def main():
 
     print(f"Loading model from {args.model_dir} ...")
     config = Qwen3TTSConfig.from_pretrained(args.model_dir)
+
+    print("Model dimensions (from config):")
+    dims = read_model_dims(config)
+
     config.talker_config._attn_implementation = "eager"
     if hasattr(config.talker_config, "code_predictor_config"):
         config.talker_config.code_predictor_config._attn_implementation = "eager"
@@ -417,9 +396,9 @@ def main():
     talker = talker.to(device)
 
     with torch.no_grad():
-        export_talker_prefill(talker, str(output_dir), device)
-        export_talker_decode(talker, str(output_dir), device)
-        export_code_predictor(talker, str(output_dir), device)
+        export_talker_prefill(talker, str(output_dir), device, dims)
+        export_talker_decode(talker, str(output_dir), device, dims)
+        export_code_predictor(talker, str(output_dir), device, dims)
 
     print(f"\nAll LM exports saved to {output_dir.resolve()}")
 

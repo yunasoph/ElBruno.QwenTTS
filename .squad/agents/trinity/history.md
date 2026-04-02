@@ -126,3 +126,40 @@ All Python export scripts are written and committed. None have been run yet — 
 ### 2026-04-02T16:43Z: 1.7B Viability Analysis Complete & Approved for Implementation
 
 📌 Team update (2026-04-02T16:43Z): Orchestration logs and decision consolidation complete. Both Trinity and Morpheus recommend pursuing Phase 1 1.7B support (8-12 hours MVP). Non-breaking change, high user value (instruction control). Awaiting maintainer approval to start Phase 1 implementation. — Scribe
+
+### 2026-04-02: Python Export Scripts Made Config-Driven for 1.7B Support
+
+**Issue #26 Phase 1 (Python side) — complete.**
+
+**What changed:**
+- `export_lm.py`: Removed all hardcoded model constants (`TALKER_HIDDEN=1024`, `CP_HIDDEN=1024`, etc.). Added `read_model_dims(config)` function that extracts dimensions from `config.talker_config` and `code_predictor_config`. Wrapper classes (`TalkerPrefillWrapper`, `TalkerDecodeWrapper`, `CodePredictorWrapper`) now accept `num_layers` as constructor arg. Export functions accept `dims` dict.
+- `reexport_lm_novmap.py`: Same config-driven refactor + added `argparse` CLI with `--model-dir` and `--output-dir` (previously hardcoded paths).
+- `reexport_base_novmap.py`: Same config-driven refactor + added `argparse` CLI.
+- `download_models.py`: Added 1.7B variants. New `--model` choices: `customvoice-1.7b`, `all-1.7b`, `base-1.7b`, `everything`.
+- `extract_tokenizer.py`: Added `--model` CLI arg. Tokenizer is shared across variants.
+- `export_embeddings.py`: Already config-driven; updated docstring to document 1.7B support.
+- `python/README.md`: Added comprehensive 1.7B documentation including export commands, GPU requirements, and time estimates.
+- `python/ARCHITECTURE.md`: Updated Talker LM config table to show 0.6B vs 1.7B comparison.
+
+**Key pattern — `read_model_dims(config)`:**
+```python
+def read_model_dims(config):
+    tc = config.talker_config
+    cp = tc.code_predictor_config
+    return {
+        "talker_num_layers": tc.num_hidden_layers,
+        "talker_hidden": tc.hidden_size,
+        "cp_num_layers": cp.num_hidden_layers,
+        "cp_hidden": cp.hidden_size,
+        ...
+    }
+```
+This pattern should be reused if any new export scripts are added.
+
+**Unchanged files (no action needed):**
+- `export_vocoder.py` — vocoder architecture is independent of Talker hidden size
+- `export_speaker_encoder.py` — speaker encoder already reads config
+- `validate_vocoder.py` — vocoder-only validation
+- `patch_models_for_dml.py` — auto-detects dimensions from ONNX graph
+
+**0.6B backward compatibility:** All scripts retain 0.6B as default. Running without args produces identical behavior to before.

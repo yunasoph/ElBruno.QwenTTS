@@ -75,25 +75,28 @@ Text input (str)
 
 ### 2b. Talker LM (Qwen3TTSTalkerForConditionalGeneration)
 
-**Config (0.6B CustomVoice defaults):**
+**Config (0.6B vs 1.7B comparison):**
 
-| Parameter | Value |
-|-----------|-------|
-| vocab_size | 3072 (codec tokens) |
-| hidden_size | 1024 |
-| intermediate_size | 2048 |
-| num_hidden_layers | 20 |
-| num_attention_heads | 16 |
-| num_key_value_heads | 2 (GQA, 8:1 ratio) |
-| head_dim | 128 (inferred: 16 × 128 = 2048? No — uses explicit head_dim config) |
-| text_hidden_size | 2048 |
-| num_code_groups | 32 |
-| max_position_embeddings | 32768 |
-| rope_scaling | M-RoPE (3D interleaved) |
+| Parameter | 0.6B | 1.7B | Notes |
+|-----------|------|------|-------|
+| vocab_size | 3072 | 3072 | Codec tokens — identical |
+| **hidden_size** | **1024** | **2048** | **Key difference** |
+| **intermediate_size** | **3072** | **6144** | **2× increase** |
+| num_hidden_layers | 28 | 28 | Same depth |
+| num_attention_heads | 16 | 16 | Same |
+| num_key_value_heads | 8 | 8 | Same (GQA, 2:1 ratio) |
+| head_dim | 128 | 128 | Same |
+| text_hidden_size | 2048 | 2048 | Same — text projection output differs |
+| num_code_groups | 32 | 32 | Same |
+| max_position_embeddings | 32768 | 32768 | Same |
+| rope_scaling | M-RoPE (3D) | M-RoPE (3D) | Same |
+
+> **1.7B additional capability:** Supports `instruct` parameter for natural-language
+> style control (emotion, rate, timbre). The 0.6B CustomVoice forces instruct=None.
 
 | I/O | Name | Shape | Dtype | Notes |
 |-----|------|-------|-------|-------|
-| In  | inputs_embeds | `(B, T, 1024)` | float32/bf16 | Combined text + codec embeds |
+| In  | inputs_embeds | `(B, T, H)` | float32/bf16 | H=1024 (0.6B) or 2048 (1.7B) |
 | In  | attention_mask | `(B, T)` | int64 | 1 = attend, 0 = ignore |
 | In  | position_ids | `(3, B, T)` | int64 | M-RoPE: temporal, height, width |
 | In  | past_key_values | DynamicCache | float | KV cache (see §4) |

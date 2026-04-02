@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Extract BPE tokenizer artifacts from Qwen3-TTS-12Hz-0.6B-CustomVoice for C# consumption.
+Extract BPE tokenizer artifacts from Qwen3-TTS for C# consumption.
+
+The tokenizer is shared across 0.6B and 1.7B model variants.
 
 Saves:
   - tokenizer_artifacts/vocab.json          (BPE vocabulary: token_str -> token_id)
@@ -11,15 +13,17 @@ Saves:
 
 Requires: transformers, tokenizers
 Run:  python extract_tokenizer.py
+      python extract_tokenizer.py --model Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
 """
 
+import argparse
 import json
 import os
 from pathlib import Path
 
 from transformers import AutoTokenizer
 
-MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+DEFAULT_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 OUTPUT_DIR = Path(__file__).parent / "tokenizer_artifacts"
 
 
@@ -134,8 +138,16 @@ def save_special_tokens_summary(tokenizer, output_dir: Path) -> None:
 
 
 def main() -> None:
-    print(f"Loading tokenizer from {MODEL_ID}...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+    parser = argparse.ArgumentParser(description="Extract BPE tokenizer artifacts for C#")
+    parser.add_argument(
+        "--model", type=str, default=DEFAULT_MODEL_ID,
+        help=f"HuggingFace model ID to load tokenizer from (default: {DEFAULT_MODEL_ID})",
+    )
+    args = parser.parse_args()
+
+    model_id = args.model
+    print(f"Loading tokenizer from {model_id}...")
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
     print(f"Tokenizer type: {type(tokenizer).__name__}")
     print(f"Vocab size: {tokenizer.vocab_size}")
 

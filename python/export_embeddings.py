@@ -4,21 +4,25 @@ Extract embedding weights and projection layers as NumPy arrays.
 Saves raw tensors that the C# runtime loads directly — no ONNX needed
 for these since they are pure lookup tables and small linear layers.
 
-Outputs (all .npy):
+All tensor shapes are determined by the model config, so this script works
+for both 0.6B and 1.7B model variants without modification.
+
+Outputs (all .npy, shapes vary by model variant):
   embeddings/
-    text_embedding.npy              — (text_vocab, 2048) float32
-    text_projection_fc1_weight.npy  — (2048, 2048) float32
-    text_projection_fc1_bias.npy    — (2048,) float32
-    text_projection_fc2_weight.npy  — (1024, 2048) float32
-    text_projection_fc2_bias.npy    — (1024,) float32
-    talker_codec_embedding.npy      — (3072, 1024) float32  (group 0 + control tokens)
-    cp_codec_embedding_{0..30}.npy  — (2048, 1024) float32  (groups 1-31)
-    codec_head_weight.npy           — (3072, 1024) float32
+    text_embedding.npy              — (text_vocab, text_hidden_size) float32
+    text_projection_fc1_weight.npy  — (text_hidden_size, text_hidden_size) float32
+    text_projection_fc1_bias.npy    — (text_hidden_size,) float32
+    text_projection_fc2_weight.npy  — (talker_hidden, text_hidden_size) float32
+    text_projection_fc2_bias.npy    — (talker_hidden,) float32
+    talker_codec_embedding.npy      — (talker_vocab, talker_hidden) float32
+    cp_codec_embedding_{0..N}.npy   — (cp_vocab, cp_hidden) float32
+    codec_head_weight.npy           — (talker_vocab, talker_hidden) float32
     speaker_ids.json                — {"speaker_name": [id0, id1, ...], ...}
     config.json                     — special token IDs and model dimensions
 
 Usage:
   python export_embeddings.py --model-dir models/Qwen3-TTS-0.6B-CustomVoice --output-dir onnx/embeddings
+  python export_embeddings.py --model-dir models/Qwen3-TTS-1.7B-CustomVoice --output-dir onnx_1.7b/embeddings
 """
 
 import argparse
