@@ -9,7 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`ITextToSpeechClient`** — MEAI-aligned service contract for text-to-speech with `SynthesizeToMemoryAsync` and `SynthesizeStreamingAsync`
+- **Qwen3-TTS 1.7B model support** — run either 0.6B or 1.7B model variant ([#26](https://github.com/elbruno/ElBruno.QwenTTS/issues/26))
+  - `QwenModelVariant` enum (`Qwen06B`, `Qwen17B`) drives model selection
+  - `QwenModelVariantConfig` maps each variant to HuggingFace repo, model directory, and dimension defaults
+  - Config-driven dimensions: hidden_size, num_layers, head_dim read from model's `config.json` at runtime
+  - Zero hardcoded dimension constants — `LanguageModel` and `EmbeddingStore` fully parameterized
+  - `TtsPipeline.CreateAsync()` accepts optional `variant` parameter (defaults to 0.6B for backward compatibility)
+  - Variant-specific model download directories under `DefaultModelDir`
+- **Instruct control API** — natural-language style control for 1.7B models
+  - `SynthesizeAsync` accepts optional `instruct` parameter (e.g., "speak with excitement")
+  - Instruct gated by variant: 1.7B flows through to prompt, 0.6B warns and ignores
+  - `QwenModelVariantConfig.SupportsInstruct()` as single source of truth
+- **CLI `--variant` and `--instruct` flags** — select model variant and instruct text from command line
+- **FileReader `--variant` flag** — batch process with either model variant
+- **Blazor Web app variant support** — variant selector dropdown, dynamic instruct field (disabled for 0.6B)
+- **47 new unit tests** — `ModelVariantTests`, `ModelVariantDownloaderTests`, `TtsPipelineVariantTests`
+- **Python export updates** — `read_model_dims(config)` replaces hardcoded constants; 1.7B download support
+
+- **`ITextToSpeechClient`** — MEAI-aligned service contractfor text-to-speech with `SynthesizeToMemoryAsync` and `SynthesizeStreamingAsync`
 - **`QwenTextToSpeechClient`** — production-ready implementation with:
   - Thread-safe lazy initialization via `SemaphoreSlim` (model loads on first use, shared across concurrent callers)
   - `SynthesizeToMemoryAsync` — returns audio as `byte[]` with automatic temp file cleanup

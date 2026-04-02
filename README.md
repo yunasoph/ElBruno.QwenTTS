@@ -16,13 +16,14 @@ Pre-exported ONNX models are hosted on HuggingFace:
 ## Features
 
 - **Local TTS Inference** — Run Qwen3-TTS entirely on your machine using ONNX Runtime
-- **Automatic Model Download** — Models download from HuggingFace on first run (~5.5 GB)
+- **Multi-Model Support** — Choose between 0.6B (lightweight) and 1.7B (advanced instruct control) variants
+- **Automatic Model Download** — Models download from HuggingFace on first run (~5.5 GB for 0.6B, ~10 GB for 1.7B)
+- **Instruct Control** — Natural-language style control with 1.7B model (e.g., "speak with excitement", "whisper softly")
 - **Multi-Speaker** — 9 built-in voices: ryan, serena, vivian, aiden, eric, dylan, uncle_fu, ono_anna, sohee
 - **Voice Cloning** — Clone any voice from a 3-second audio sample ([docs](docs/voice-cloning.md))
 - **Web UI** — Blazor app with TTS generation and voice cloning pages ([docs](docs/web-app.md))
 - **GPU Acceleration** — Optional CUDA or DirectML support via SessionOptions injection ([docs](docs/gpu-acceleration.md))
 - **Multi-Language** — English, Spanish, Chinese, Japanese, Korean
-- **Voice Control** — Instruction-based style (e.g., "speak with excitement")
 - **Shared Model Cache** — Models stored once in `%LOCALAPPDATA%/ElBruno/QwenTTS`, shared across all apps
 - **24 kHz WAV Output** — High-quality mono audio
 
@@ -41,15 +42,24 @@ dotnet add package ElBruno.QwenTTS
 ```csharp
 using ElBruno.QwenTTS.Pipeline;
 
-// Models download automatically on first run (~5.5 GB)
+// 0.6B model (default) — models download automatically (~5.5 GB)
 using var pipeline = await TtsPipeline.CreateAsync("models");
 await pipeline.SynthesizeAsync("Hello world!", "ryan", "hello.wav", "english");
+
+// 1.7B model — supports instruct control (~10 GB)
+using var pipeline17 = await TtsPipeline.CreateAsync("models", variant: QwenModelVariant.Qwen17B);
+await pipeline17.SynthesizeAsync("Hello world!", "ryan", "hello.wav", "english",
+    instruct: "speak with warmth and excitement");
 ```
 
 ### CLI
 
 ```bash
+# Default (0.6B model)
 dotnet run --project src/ElBruno.QwenTTS -- --model-dir models --text "Hello, this is a test." --speaker ryan --language english --output hello.wav
+
+# 1.7B model with instruct control
+dotnet run --project src/ElBruno.QwenTTS -- --model-dir models --variant 1.7b --text "Hello, this is a test." --speaker ryan --instruct "speak with excitement" --output hello.wav
 ```
 
 Models are downloaded automatically if not present in the `--model-dir` directory.
