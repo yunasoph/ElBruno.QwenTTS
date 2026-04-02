@@ -163,3 +163,5 @@ This pattern should be reused if any new export scripts are added.
 - `patch_models_for_dml.py` — auto-detects dimensions from ONNX graph
 
 **0.6B backward compatibility:** All scripts retain 0.6B as default. Running without args produces identical behavior to before.
+
+📌 Team update (2026-04-02T1719): Phase 1 complete — multi-variant support (0.6B and 1.7B) implemented across C#, Python, and tests. Orchestration logs and decisions merged. Non-breaking change, 88 tests pass. — Scribe

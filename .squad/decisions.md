@@ -91,3 +91,26 @@
 **By:** Trinity, Morpheus (consolidated)
 **What:** 1.7B model variant is architecturally compatible with existing ONNX pipeline and recommended for implementation. Technical analysis complete: only Talker LM hidden_size changes (1024→2048), all other components (Code Predictor, vocoder, tokenizer, speakers) remain identical. ONNX export feasible with config-driven changes (remove hardcoded `TALKER_HIDDEN = 1024`). Scope assessment: Medium effort (1-2 days), non-breaking change, high user value (instruction control for emotion/rate/timbre). Resource requirements: 12-16 GB RAM, 2-2.5× slower inference. Code changes: Python exporters (2-3 hours) + C# dimension-agnostic refactoring (4-6 hours).
 **Why:** User request #26 seeks instruction control not available in 0.6B. 1.7B-CustomVoice provides this capability while maintaining identical architecture except hidden size. Backward compatible with 0.6B (default behavior). Manageable engineering cost with high user value. Phase 1 MVP (8-12 hours) sufficient for basic support; Phase 2 optimization (FP16, quantization) future work. Both Trinity and Morpheus recommend pursuing if approved by maintainer.
+
+### 2026-04-02T17:19Z: 1.7B Implementation Phase 1 Complete (consolidated)
+**By:** Neo, Trinity, Tank
+**What:** Full implementation of multi-variant model support (0.6B and 1.7B) completed. All hardcoded model dimensions replaced with config-driven values. Three independent decisions consolidated:
+
+1. **Neo (C# Config-Driven Dimensions):** All model dimensions (hidden_size, num_layers, num_kv_heads, head_dim, vocab_size) now read from `config.json` at runtime in EmbeddingStore and LanguageModel. `QwenModelVariant` enum drives download and storage only, not inference dimensions. Rationale: future variants with different dimensions work automatically if config.json is correct; .npy array shapes are the ground truth for dimension discovery.
+
+2. **Trinity (Python Export Scripts Config-Driven):** Removed hardcoded `TALKER_HIDDEN=1024`, `CP_HIDDEN=1024` from export_lm.py, reexport_lm_novmap.py, reexport_base_novmap.py. Added `read_model_dims(config)` function to extract dimensions dynamically from `config.talker_config` and `code_predictor_config`. Extended download_models.py with 1.7B variants (`customvoice-1.7b`, `all-1.7b`, `base-1.7b`, `everything`). Rationale: any future model variant works without code changes as long as ONNX models and config.json are consistent.
+
+3. **Tank (Variant API & Tests):** Created `QwenModelVariant` enum (Qwen06B=0, Qwen17B=1) and `QwenModelVariantConfig` static class with hidden_size, intermediate_size, HuggingFace repoId, and model subdirectory mappings. Added 47 new tests across ModelVariantTests.cs, ModelVariantDownloaderTests.cs, TtsPipelineVariantTests.cs. Default variant Qwen06B ensures backward compat.
+
+**Why:** Approved by team (Trinity, Morpheus, Neo). Phase 1 scope (8-12 hours, actual ~8 hours) matched estimate. Non-breaking change preserves all existing APIs and default behavior. Backward compatible: 0.6B remains default, legacy model directory unchanged. 1.7B model support unlocks instruction control (emotion, rate, timbre) not available in 0.6B. High user value with manageable engineering cost.
+
+**Impact Summary:**
+- **C#:** 88 tests pass (78 Core + 10 VoiceCloning). Build clean. Zero hardcoded dimension constants. TtsPipeline.CreateAsync() accepts optional variant parameter.
+- **Python:** All export scripts config-driven. 0.6B backward compatible (same defaults, same outputs). download_models.py extended with 1.7B options.
+- **Storage:** 0.6B uses legacy root dir; 1.7B uses `/1.7B` subdirectory. No file mixing.
+- **Architecture:** QwenModelVariant enum → repo/directory only. Dimensions → config.json (via EmbeddingStore shape detection). Variant-agnostic inference pipeline.
+
+**Next Steps (Phase 2):**
+- GPU-based 1.7B ONNX export when infrastructure available
+- Performance optimization: FP16 export, quantization (future)
+- Additional variants if user demand increases

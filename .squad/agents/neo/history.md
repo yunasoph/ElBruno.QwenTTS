@@ -57,3 +57,19 @@ TextTokenizer.cs and Vocoder.cs are fully implemented. LanguageModel.cs is a ske
 
 ### 2026-02-27: Warm-up Review — Neo's Contribution
 📌 Team update (2026-02-27T16:59:44Z): Architecture review completed. ITextToSpeechClient approved for production use with documentation updates recommended before v1.1.0. — Morpheus, Neo, Tank
+
+### 2026-04-02: Multi-Variant Model Support (Phase 1) — Config-Driven Refactor
+**By:** Neo (.NET Developer)
+**What:** Refactored the C# pipeline to support multiple model variants (0.6B and 1.7B). All hardcoded dimensions in LanguageModel.cs and EmbeddingStore.cs replaced with config-driven values read from config.json at runtime.
+**Key changes:**
+- **QwenModelVariant enum** + **QwenModelVariantConfig** (Pipeline/QwenModelVariant.cs) — maps variant → repo ID, hidden_size, intermediate_size, default model directory
+- **EmbeddingStore.cs** — dimensions now derived from loaded .npy array shapes (not hardcoded). Exposes `HiddenSize`, `TextHiddenSize`, `CpHiddenSize` properties.
+- **LanguageModel.cs** — all hardcoded 1024 (hidden_size), 28 (num_layers), 8 (num_kv_heads), 128 (head_dim), 5 (CP layers) replaced with fields initialized from config.json. Also replaced hardcoded 2048 (text_hidden_size) and CP vocab_size.
+- **ModelDownloader.cs** — added `ResolveForVariant()` to determine correct model dir + repo for a variant. 0.6B uses legacy root dir (backward compat); 1.7B gets `/1.7B` subdirectory.
+- **TtsPipeline.cs** — `CreateAsync()` now accepts `QwenModelVariant variant = Qwen06B`. Uses `ResolveForVariant()` for dir/repo resolution.
+- **QwenTtsOptions.cs** — added `ModelVariant` property; `HuggingFaceRepo` changed from `string` with default to `string?` (null = auto-resolve from variant).
+- **QwenTextToSpeechClient.cs** / **QwenTtsServiceExtensions.cs** — pass variant through to pipeline.
+**Backward compat:** Default behavior (no variant specified) → 0.6B. All existing APIs, default paths, and repo IDs unchanged. 88 tests pass (78 Core + 10 VoiceCloning).
+**Architecture decision:** Runtime dimensions come from config.json (loaded in EmbeddingStore), not from the variant enum. The enum drives download/storage only. This means any future model variant with different dimensions just needs correct npy/config files — no C# code changes.
+
+📌 Team update (2026-04-02T1719): Phase 1 complete — multi-variant support (0.6B and 1.7B) implemented across C#, Python, and tests. Orchestration logs and decisions merged. Non-breaking change, 88 tests pass. — Scribe

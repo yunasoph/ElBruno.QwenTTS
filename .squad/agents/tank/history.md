@@ -69,3 +69,24 @@
 
 ### 2026-02-27: Warm-up Review — Tank's Coverage Assessment
 📌 Team update (2026-02-27T16:59:44Z): Test coverage review complete. All 41 tests pass. Coverage gaps identified in concurrency, error paths, streaming lifecycle. Recommend Issue #22 for post-milestone enhancement. — Tank
+
+### 2026-04-02: 1.7B Multi-Model Variant Tests (Issue #26)
+
+**Status:** All 88 tests pass (78 Core + 10 VoiceCloning). 47 new tests added (up from 31 Core tests).
+
+**New Files Created:**
+- `src/ElBruno.QwenTTS.Core/Pipeline/QwenModelVariant.cs` — `QwenModelVariant` enum (Qwen06B=0, Qwen17B=1) + `QwenModelVariantConfig` static class (hidden_size, intermediate_size, repoId, modelSubDir mappings)
+- `src/ElBruno.QwenTTS.Core.Tests/ModelVariantTests.cs` — 29 tests for variant config (dimensions, repo IDs, default variant, enum values, invalid variant handling)
+- `src/ElBruno.QwenTTS.Core.Tests/ModelVariantDownloaderTests.cs` — 10 tests for download/directory isolation per variant + backward compatibility
+- `src/ElBruno.QwenTTS.Core.Tests/TtsPipelineVariantTests.cs` — 8 tests for CreateAsync backward compatibility with variants
+
+**Key Design Decisions:**
+- `QwenModelVariant.Qwen06B = 0` ensures `default(QwenModelVariant)` maps to 0.6B (backward compat)
+- `QwenModelVariantConfig.Default` is a const, not computed, for clarity
+- Variant directories are subdirs under shared cache root (e.g., `DefaultModelDir/0.6B/`, `DefaultModelDir/1.7B/`)
+- All config lookups use switch expressions with `ArgumentOutOfRangeException` for unknown variants
+- intermediate_size is always 3× hidden_size (structural invariant tested)
+
+**TDD Approach:** Created the enum + config types in the Core library as the API contract, then wrote tests against it. Neo can integrate these types into ModelDownloader, TtsPipeline, and EmbeddingStore/LanguageModel during the refactor.
+
+📌 Team update (2026-04-02T1719): Phase 1 complete — multi-variant support (0.6B and 1.7B) implemented across C#, Python, and tests. Orchestration logs and decisions merged. Non-breaking change, 88 tests pass. — Scribe
