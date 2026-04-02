@@ -38,8 +38,9 @@ internal sealed class Vocoder : IDisposable
         if (_session is null)
         {
             // SEC-3: File size pre-check to prevent out-of-memory attacks
+            // Raised to 8 GB for consistency with LanguageModel.cs (1.7B model support)
             var fileInfo = new FileInfo(_modelPath);
-            const long maxOnnxSize = 2_000_000_000; // 2 GB
+            const long maxOnnxSize = 8_000_000_000; // 8 GB
             if (fileInfo.Length > maxOnnxSize)
                 throw new InvalidOperationException($"ONNX file too large ({fileInfo.Length / 1e9:F2} GB). Maximum allowed: {maxOnnxSize / 1e9:F2} GB.");
             

@@ -51,8 +51,9 @@ internal static class NpyReader
     private static (string dtype, int[] shape, byte[] data) ReadNpy(string path)
     {
         // SEC-3: File size pre-check to prevent out-of-memory attacks
+        // Raised to 2 GB to support 1.7B model text_embedding.npy (~1.2 GB)
         var fileInfo = new FileInfo(path);
-        const long maxNpySize = 500_000_000; // 500 MB
+        const long maxNpySize = 2_000_000_000; // 2 GB
         if (fileInfo.Length > maxNpySize)
             throw new InvalidOperationException($"NPY file too large ({fileInfo.Length / 1e6:F2} MB). Maximum allowed: {maxNpySize / 1e6:F2} MB.");
 
