@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2025-07-24
+
+### Fixed
+
+- **NPY file size limit raised to 2 GB** — unblocks 1.7B model's `text_embedding.npy` (~1.2 GB) ([#25](https://github.com/elbruno/ElBruno.QwenTTS/issues/25))
+- **Vocoder ONNX size limit raised to 8 GB** — consistent with LanguageModel limits for large model support
+
+### Added
+
+- 10 new NpyReader size-limit integration tests exercising real validation paths
+
 ## [1.1.0] - 2026-04-02
 
 ### Added
