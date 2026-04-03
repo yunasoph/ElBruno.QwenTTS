@@ -204,9 +204,12 @@ internal sealed class LanguageModel : IDisposable
         var cpEmbedBuf = new float[_cpHiddenSize];
         var nextInputBuf = new float[_hiddenSize];
 
+        // CP input dimension: projected (cpHiddenSize) when projection exists, else full hiddenSize
+        int cpInputDim = _embeddings.HasCpProjection ? _cpHiddenSize : _hiddenSize;
+
         // Rent per-step buffers before loop
         var pooledMask = ArrayPool<long>.Shared.Rent(2048);
-        var pooledCpInputs = ArrayPool<float>.Shared.Rent(2 * _cpHiddenSize);
+        var pooledCpInputs = ArrayPool<float>.Shared.Rent(2 * cpInputDim);
 
         try
         {
@@ -226,11 +229,27 @@ internal sealed class LanguageModel : IDisposable
                 _embeddings.TalkerCodecEmbedding(group0Token, group0EmbedBuf);
 
                 // CP prefill: concat(hidden_states[:,-1,:], group0_embed)
-                int hOffset = hiddenStates.Length - _hiddenSize; // last hidden state position
-                for (int i = 0; i < _cpHiddenSize; i++)
+                if (_embeddings.HasCpProjection)
                 {
-                    pooledCpInputs[i] = hiddenStates[hOffset + i];
-                    pooledCpInputs[_cpHiddenSize + i] = group0EmbedBuf[i];
+                    // Project hidden state: _hiddenSize → _cpHiddenSize
+                    int hOffset = hiddenStates.Length - _hiddenSize;
+                    var lastHidden = new ReadOnlySpan<float>(hiddenStates, hOffset, _hiddenSize);
+                    var projectedHidden = new Span<float>(pooledCpInputs, 0, _cpHiddenSize);
+                    _embeddings.CpProjection(lastHidden, projectedHidden);
+
+                    // Project group0 embed: _hiddenSize → _cpHiddenSize
+                    var projectedGroup0 = new Span<float>(pooledCpInputs, _cpHiddenSize, _cpHiddenSize);
+                    _embeddings.CpProjection(group0EmbedBuf, projectedGroup0);
+                }
+                else
+                {
+                    // No projection: copy full cpInputDim elements directly
+                    int hOffset = hiddenStates.Length - _hiddenSize;
+                    for (int i = 0; i < cpInputDim; i++)
+                    {
+                        pooledCpInputs[i] = hiddenStates[hOffset + i];
+                        pooledCpInputs[cpInputDim + i] = group0EmbedBuf[i];
+                    }
                 }
 
                 var (cpPastKeys, cpPastValues) = InitCPKV();
@@ -239,7 +258,7 @@ internal sealed class LanguageModel : IDisposable
                 for (int groupIdx = 1; groupIdx < 16; groupIdx++)
                 {
                     int cpInputSeqLen = groupIdx == 1 ? 2 : 1;
-                    int flatCpSize = cpInputSeqLen * _cpHiddenSize;
+                    int flatCpSize = cpInputSeqLen * cpInputDim;
                     
                     var flatCpEmbeds = ArrayPool<float>.Shared.Rent(flatCpSize);
                     try
@@ -248,7 +267,7 @@ internal sealed class LanguageModel : IDisposable
                         
                         var cpInputsList = new List<NamedOnnxValue>
                         {
-                            NamedOnnxValue.CreateFromTensor("inputs_embeds", new DenseTensor<float>(flatCpEmbeds.AsMemory(0, flatCpSize), [1, cpInputSeqLen, _cpHiddenSize])),
+                            NamedOnnxValue.CreateFromTensor("inputs_embeds", new DenseTensor<float>(flatCpEmbeds.AsMemory(0, flatCpSize), [1, cpInputSeqLen, cpInputDim])),
                             NamedOnnxValue.CreateFromTensor("generation_steps", new DenseTensor<long>(new long[] { groupIdx - 1 }, [1])),
                             NamedOnnxValue.CreateFromTensor("past_keys", new DenseTensor<float>(cpPastKeys, [_cpNumLayers, 1, _cpNumKvHeads, cpPastLen, _cpHeadDim])),
                             NamedOnnxValue.CreateFromTensor("past_values", new DenseTensor<float>(cpPastValues, [_cpNumLayers, 1, _cpNumKvHeads, cpPastLen, _cpHeadDim]))
@@ -268,8 +287,9 @@ internal sealed class LanguageModel : IDisposable
                         if (groupIdx < 15)
                         {
                             _embeddings.CpCodecEmbedding(groupIdx - 1, cpToken, cpEmbedBuf);
-                            for (int i = 0; i < _cpHiddenSize; i++)
-                                pooledCpInputs[i] = cpEmbedBuf[i];
+                            // Zero-fill then copy: handles cpInputDim > _cpHiddenSize (old 1.7B compat)
+                            for (int i = 0; i < cpInputDim; i++)
+                                pooledCpInputs[i] = i < _cpHiddenSize ? cpEmbedBuf[i] : 0f;
                         }
                     }
                     finally

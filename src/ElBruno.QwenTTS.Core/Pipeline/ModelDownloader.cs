@@ -42,13 +42,31 @@ public sealed class ModelDownloader
     ];
 
     /// <summary>
+    /// Additional files required only by the 1.7B variant (CP projection weights).
+    /// </summary>
+    private static readonly string[] Extra17BFiles =
+    [
+        "embeddings/cp_projection_weight.npy",
+        "embeddings/cp_projection_bias.npy"
+    ];
+
+    /// <summary>
+    /// Returns the expected file list for a given model variant.
+    /// The 1.7B variant includes additional CP projection weight files.
+    /// </summary>
+    public static string[] GetExpectedFiles(QwenModelVariant variant = QwenModelVariant.Qwen06B) =>
+        variant == QwenModelVariant.Qwen17B
+            ? [.. ExpectedFiles, .. Extra17BFiles]
+            : ExpectedFiles;
+
+    /// <summary>
     /// Returns true if the model directory contains all required files.
     /// </summary>
-    public static bool IsModelDownloaded(string? modelDir = null)
+    public static bool IsModelDownloaded(string? modelDir = null, QwenModelVariant variant = QwenModelVariant.Qwen06B)
     {
         modelDir ??= DefaultModelDir;
         using var downloader = new HuggingFaceDownloader();
-        return downloader.AreFilesAvailable(ExpectedFiles, modelDir);
+        return downloader.AreFilesAvailable(GetExpectedFiles(variant), modelDir);
     }
 
     // Keep old name as alias for backward compatibility
@@ -58,11 +76,11 @@ public sealed class ModelDownloader
     /// <summary>
     /// Returns the list of files that are missing from the model directory.
     /// </summary>
-    public static IReadOnlyList<string> GetMissingFiles(string? modelDir = null)
+    public static IReadOnlyList<string> GetMissingFiles(string? modelDir = null, QwenModelVariant variant = QwenModelVariant.Qwen06B)
     {
         modelDir ??= DefaultModelDir;
         using var downloader = new HuggingFaceDownloader();
-        return downloader.GetMissingFiles(ExpectedFiles, modelDir);
+        return downloader.GetMissingFiles(GetExpectedFiles(variant), modelDir);
     }
 
     /// <summary>
@@ -73,15 +91,17 @@ public sealed class ModelDownloader
         string? modelDir = null,
         string repoId = DefaultRepoId,
         IProgress<ModelDownloadProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        QwenModelVariant variant = QwenModelVariant.Qwen06B)
     {
         modelDir ??= DefaultModelDir;
         Directory.CreateDirectory(modelDir);
 
+        var files = GetExpectedFiles(variant);
         using var downloader = new HuggingFaceDownloader();
 
         // Check if already downloaded
-        if (downloader.AreFilesAvailable(ExpectedFiles, modelDir))
+        if (downloader.AreFilesAvailable(files, modelDir))
         {
             progress?.Report(new ModelDownloadProgress(0, 0, null, "All model files already present.", 0, 0));
             return;
@@ -96,7 +116,7 @@ public sealed class ModelDownloader
         {
             RepoId = repoId,
             LocalDirectory = modelDir,
-            RequiredFiles = ExpectedFiles,
+            RequiredFiles = files,
             Progress = downloadProgress
         };
 
@@ -111,11 +131,12 @@ public sealed class ModelDownloader
         string? modelDir = null,
         string repoId = DefaultRepoId,
         IProgress<ModelDownloadProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        QwenModelVariant variant = QwenModelVariant.Qwen06B)
     {
         modelDir ??= DefaultModelDir;
-        if (!IsModelDownloaded(modelDir))
-            await DownloadModelAsync(modelDir, repoId, progress, cancellationToken);
+        if (!IsModelDownloaded(modelDir, variant))
+            await DownloadModelAsync(modelDir, repoId, progress, cancellationToken, variant);
         return modelDir;
     }
 

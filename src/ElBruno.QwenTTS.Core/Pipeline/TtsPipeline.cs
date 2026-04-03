@@ -136,13 +136,13 @@ public sealed class TtsPipeline : ITtsPipeline
     {
         var (resolvedDir, resolvedRepo) = ModelDownloader.ResolveForVariant(variant, modelDir, repoId);
 
-        if (!ModelDownloader.IsModelDownloaded(resolvedDir))
+        if (!ModelDownloader.IsModelDownloaded(resolvedDir, variant))
         {
             progress?.Report("Model files not found — downloading from HuggingFace...");
             var downloadProgress = progress != null
                 ? new Progress<ModelDownloadProgress>(p => progress.Report(p.Message))
                 : null;
-            await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken);
+            await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken, variant);
             progress?.Report("Model download complete.");
         }
         return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant);
@@ -162,8 +162,8 @@ public sealed class TtsPipeline : ITtsPipeline
     {
         var (resolvedDir, resolvedRepo) = ModelDownloader.ResolveForVariant(variant, modelDir, repoId);
 
-        if (!ModelDownloader.IsModelDownloaded(resolvedDir))
-            await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken);
+        if (!ModelDownloader.IsModelDownloaded(resolvedDir, variant))
+            await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken, variant);
         return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant);
     }
 

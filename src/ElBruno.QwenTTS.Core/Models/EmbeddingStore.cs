@@ -17,6 +17,10 @@ internal sealed class EmbeddingStore : IDisposable
     private readonly float[][,] _cpCodecEmbeddings;     // 15 × (cp_vocab, cp_hidden)
     private readonly Dictionary<string, int> _speakerIds;
 
+    // Optional CP projection weights (only present for 1.7B with re-exported code_predictor)
+    private readonly float[,]? _cpProjectionWeight;  // (cp_hidden, talker_hidden) = (1024, 2048) for 1.7B
+    private readonly float[]? _cpProjectionBias;      // (cp_hidden,) = (1024,) for 1.7B
+
     // Dimensions derived from loaded arrays — no hardcoding
     private readonly int _textHiddenSize;   // text embedding dim (2048 for both 0.6B and 1.7B)
     private readonly int _fc1OutSize;       // intermediate MLP size
@@ -33,6 +37,9 @@ internal sealed class EmbeddingStore : IDisposable
 
     /// <summary>Code Predictor embedding dimension derived from loaded data.</summary>
     public int CpHiddenSize => _cpHiddenSize;
+
+    /// <summary>Whether CP projection weights are loaded (true for 1.7B with re-exported code_predictor).</summary>
+    public bool HasCpProjection => _cpProjectionWeight != null;
 
     public EmbeddingStore(string embeddingsDir, string configPath)
     {
@@ -70,6 +77,15 @@ internal sealed class EmbeddingStore : IDisposable
         _fc1OutSize = _fc1Weight.GetLength(0);
         _hiddenSize = _fc2Weight.GetLength(0);
         _cpHiddenSize = _cpCodecEmbeddings[0].GetLength(1);
+
+        // Optional: load CP projection weights (only present for 1.7B with re-exported code_predictor)
+        var projWeightPath = Path.Combine(embeddingsDir, "cp_projection_weight.npy");
+        var projBiasPath = Path.Combine(embeddingsDir, "cp_projection_bias.npy");
+        if (File.Exists(projWeightPath) && File.Exists(projBiasPath))
+        {
+            _cpProjectionWeight = NpyReader.ReadFloat2D(projWeightPath);
+            _cpProjectionBias = NpyReader.ReadFloat1D(projBiasPath);
+        }
     }
 
     /// <summary>
@@ -133,6 +149,21 @@ internal sealed class EmbeddingStore : IDisposable
         var table = _cpCodecEmbeddings[groupIndex];
         for (int i = 0; i < _cpHiddenSize; i++)
             output[i] = table[tokenId, i];
+    }
+
+    /// <summary>
+    /// Applies the CP projection: output = weight @ input + bias.
+    /// Maps from talker hidden_size (2048 for 1.7B) → cp_hidden_size (1024).
+    /// Only available when <see cref="HasCpProjection"/> is true.
+    /// </summary>
+    public void CpProjection(ReadOnlySpan<float> input, Span<float> output)
+    {
+        if (_cpProjectionWeight == null || _cpProjectionBias == null)
+            throw new InvalidOperationException("CP projection weights not loaded");
+
+        MatMul(_cpProjectionWeight, input, output);
+        for (int i = 0; i < _cpHiddenSize; i++)
+            output[i] += _cpProjectionBias[i];
     }
 
     /// <summary>
