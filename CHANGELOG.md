@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-07-25
+
+### Fixed
+
+- **1.7B model text truncation** — fixed Code Predictor input dimension mismatch that caused only first ~2 words to be generated ([#27](https://github.com/elbruno/ElBruno.QwenTTS/issues/27))
+  - Removed `small_to_mtp_projection` from ONNX graph; projection now applied externally in C#
+  - Re-exported `code_predictor.onnx` for 1.7B with correct input shape (1024-dim)
+  - `EmbeddingStore` loads optional `cp_projection_weight.npy` / `cp_projection_bias.npy` and applies projection during CP prefill
+  - Full backward compatibility: old models without projection files continue to work
+
+### Added
+
+- 41 new tests covering CP projection math, input dimension contracts for 0.6B/1.7B, and model downloader variant file lists
+- `ModelDownloader` variant-aware file lists with CP projection NPY files for 1.7B
+
 ## [1.1.1] - 2025-07-24
 
 ### Fixed
