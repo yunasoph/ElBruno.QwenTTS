@@ -16,6 +16,8 @@ Outputs (all .npy, shapes vary by model variant):
     text_projection_fc2_bias.npy    — (talker_hidden,) float32
     talker_codec_embedding.npy      — (talker_vocab, talker_hidden) float32
     cp_codec_embedding_{0..N}.npy   — (cp_vocab, cp_hidden) float32
+    cp_projection_weight.npy        — (cp_hidden, talker_hidden) float32  [1.7B only]
+    cp_projection_bias.npy          — (cp_hidden,) float32                [1.7B only]
     codec_head_weight.npy           — (talker_vocab, talker_hidden) float32
     speaker_ids.json                — {"speaker_name": [id0, id1, ...], ...}
     config.json                     — special token IDs and model dimensions
@@ -103,6 +105,22 @@ def main():
     cp_embeddings = talker.code_predictor.model.codec_embedding
     for i, emb in enumerate(cp_embeddings):
         save_tensor(emb.weight, output_dir / f"cp_codec_embedding_{i}.npy")
+
+    # ── Code Predictor projection (1.7B only: Linear 2048→1024) ─────────
+    # For 0.6B this attribute doesn't exist (talker_hidden == cp_hidden).
+    # C# applies this projection externally for the CP prefill step.
+    cp = talker.code_predictor
+    if hasattr(cp, "small_to_mtp_projection") and cp.small_to_mtp_projection is not None:
+        proj_layer = cp.small_to_mtp_projection
+        if hasattr(proj_layer, "weight"):
+            print("\nCode Predictor projection (small_to_mtp):")
+            save_tensor(proj_layer.weight, output_dir / "cp_projection_weight.npy")
+            if hasattr(proj_layer, "bias") and proj_layer.bias is not None:
+                save_tensor(proj_layer.bias, output_dir / "cp_projection_bias.npy")
+            else:
+                print("  (no bias)")
+    else:
+        print("\nCode Predictor projection: not present (0.6B model, skip)")
 
     # ── Codec head (Talker output projection) ─────────────────────────────
     print("\nCodec head:")

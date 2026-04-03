@@ -136,7 +136,9 @@ class CodePredictorWrapper(nn.Module):
     def __init__(self, code_predictor, num_layers):
         super().__init__()
         self.model = code_predictor.model
-        self.projection = code_predictor.small_to_mtp_projection
+        # NOTE: small_to_mtp_projection is NOT stored here — it's exported
+        # separately as .npy files via export_embeddings.py. Storing it as
+        # a submodule would leak its weights into the ONNX graph.
         self.num_layers = num_layers
 
         all_weights = torch.stack(
@@ -145,7 +147,9 @@ class CodePredictorWrapper(nn.Module):
         self.register_buffer("lm_head_weights", all_weights)
 
     def forward(self, inputs_embeds, generation_steps, past_keys, past_values):
-        inputs_embeds = self.projection(inputs_embeds)
+        # Projection is NOT applied here — C# applies it externally for the
+        # CP prefill step only. This lets decode steps feed cp_hidden-dim
+        # embeddings directly without a dimension mismatch.
 
         cache = DynamicCache()
         for i in range(self.num_layers):
@@ -301,7 +305,7 @@ def export_code_predictor(talker, output_dir, device, dims):
     B, S = 1, 2  # prefill: [talker_hidden, group_0_embed]
     T_past = 2   # small past length for export tracing
 
-    dummy_embeds = torch.randn(B, S, dims["talker_hidden"], device=device)
+    dummy_embeds = torch.randn(B, S, dims["cp_hidden"], device=device)
     dummy_steps = torch.tensor([0], dtype=torch.int64, device=device)
 
     # Stacked KV cache: (num_layers, B, num_kv_heads, T_past, head_dim)

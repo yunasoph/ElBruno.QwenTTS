@@ -205,3 +205,24 @@ This pattern should be reused if any new export scripts are added.
 - `reexport_lm_novmap.py`: Fixed CP dummy input + replaced broken `fix_external_data_ref` with `consolidate_external_data`
 - `export_vocoder.py`: Added vmap-free masking patch + `--output-dir` flag
 - `upload_to_hf.py`: Auto-detect model variant from config.json for README generation
+
+### 2026-04-03: Issue #27 Fix — Remove CP Projection from ONNX Graph
+
+**Root cause:** The `code_predictor.onnx` for 1.7B had `small_to_mtp_projection` (Linear: 2048→1024) baked into the ONNX graph via `CodePredictorWrapper.forward()`. This meant the ONNX model's `inputs_embeds` expected 2048-dim input. For CP prefill, C# feeds the talker hidden state (2048-dim) which got projected down to 1024 — correct. But for subsequent CP decode steps (groups 2-15), C# feeds 1024-dim codec embeddings, which the model tried to project from 2048→1024, causing shape mismatch and truncated output.
+
+**Fix applied to 4 Python export scripts:**
+1. `export_lm.py` — Removed `self.projection` from `CodePredictorWrapper` (was leaking ~400 MB unused weights into ONNX). Removed `self.projection(inputs_embeds)` from `forward()`. Changed dummy input dim from `talker_hidden` to `cp_hidden`.
+2. `reexport_lm_novmap.py` — Same wrapper fix + dummy dim fix.
+3. `reexport_base_novmap.py` — Same wrapper fix (dummy already used `cp_hidden`).
+4. `export_embeddings.py` — Added export of `cp_projection_weight.npy` (1024, 2048) and `cp_projection_bias.npy` (1024,) when `small_to_mtp_projection` attribute exists (1.7B only). 0.6B is safely skipped via `hasattr` check.
+
+**Key learning — nn.Module attribute leakage in ONNX:**
+Storing an `nn.Module` as `self.projection` in the wrapper causes `torch.onnx.export` to include its parameters in the graph as initializers, even if `forward()` never calls it. This doubled the ONNX data file from 420 MB to 890 MB. Fix: don't store unused submodules as wrapper attributes.
+
+**Re-export results:**
+- `code_predictor.onnx`: inputs_embeds shape = [batch, seq, **1024**] (was 2048) ✓
+- `code_predictor.onnx.data`: 420 MB (was 428 MB with projection baked in) ✓
+- `cp_projection_weight.npy`: (1024, 2048) float32, 8 MB ✓
+- `cp_projection_bias.npy`: (1024,) float32, 4 KB ✓
+
+**Uploaded to HuggingFace:** `elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX` — all 4 files.

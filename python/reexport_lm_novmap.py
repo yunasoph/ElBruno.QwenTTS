@@ -104,13 +104,13 @@ class CodePredictorWrapper(nn.Module):
     def __init__(self, code_predictor, num_layers):
         super().__init__()
         self.model = code_predictor.model
-        self.projection = code_predictor.small_to_mtp_projection
+        # small_to_mtp_projection exported as .npy, not baked into ONNX
         self.num_layers = num_layers
         all_weights = torch.stack([head.weight for head in code_predictor.lm_head])
         self.register_buffer("lm_head_weights", all_weights)
 
     def forward(self, inputs_embeds, generation_steps, past_keys, past_values):
-        inputs_embeds = self.projection(inputs_embeds)
+        # Projection applied externally by C# — not baked into ONNX
         cache = DynamicCache()
         for i in range(self.num_layers):
             cache.update(past_keys[i], past_values[i], i)
@@ -235,7 +235,7 @@ def export_code_predictor(talker, output_dir, dims):
     wrapper = CodePredictorWrapper(talker.code_predictor, dims["cp_num_layers"]).eval()
     B, S, T_past = 1, 2, 2
     dummy = (
-        torch.randn(B, S, dims["talker_hidden"]),
+        torch.randn(B, S, dims["cp_hidden"]),
         torch.tensor([0], dtype=torch.int64),
         torch.randn(dims["cp_num_layers"], B, dims["cp_num_kv_heads"], T_past, dims["cp_head_dim"]),
         torch.randn(dims["cp_num_layers"], B, dims["cp_num_kv_heads"], T_past, dims["cp_head_dim"]),
