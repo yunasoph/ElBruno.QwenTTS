@@ -11,6 +11,9 @@ permissions:
   contents: read
   pull-requests: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   guard:
     runs-on: ubuntu-latest
@@ -74,8 +77,14 @@ jobs:
               .filter(f => f.status !== 'removed')
               .map(f => f.filename)
               .filter(f => {
-                // .ai-team/** and .squad/** ΓÇö ALL team state files, zero exceptions
-                if (f === '.ai-team' || f.startsWith('.ai-team/') || f === '.squad' || f.startsWith('.squad/')) return true;
+                // Allow essential config files that workflows need on main
+                if (f.startsWith('.squad/')) {
+                  const allowed = ['.squad/team.md', '.squad/routing.md', '.squad/ceremonies.md'];
+                  if (allowed.includes(f)) return false; // not forbidden
+                  return true; // everything else under .squad/ is forbidden
+                }
+                // .ai-team/** ΓÇö ALL team state files, zero exceptions
+                if (f === '.ai-team' || f.startsWith('.ai-team/')) return true;
                 // .ai-team-templates/** ΓÇö Squad's own templates, stay on dev
                 if (f === '.ai-team-templates' || f.startsWith('.ai-team-templates/')) return true;
                 // team-docs/** ΓÇö ALL internal team docs, zero exceptions
