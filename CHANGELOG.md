@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026-04-05]
+
+### Fixed
+
+- **CP projection bias dimension mismatch for 1.7B model variant** ([#28](https://github.com/elbruno/ElBruno.QwenTTS/issues/28))
+  - Added `hidden_size` to `CodePredictorConfig` to read `code_predictor.hidden_size` from config.json
+  - Fixed `EmbeddingStore.CpProjection()` bias loop to use projection weight output dimension instead of `_cpHiddenSize`
+  - Fixed `LanguageModel` CP input dimension to use config-driven value via `CpModelHiddenSize`
+  - Added load-time validation for projection weight/bias shape consistency
+
+### Added
+
+- 16 regression tests for the CP dimension mismatch scenario
+
 ## [1.2.0] - 2025-07-25
 
 ### Fixed
