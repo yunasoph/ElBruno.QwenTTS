@@ -49,6 +49,7 @@ python/parity_outputs/
 .squad/agents/
 .squad/log/
 .squad/orchestration-log/
+.squad/decisions.md
 .squad/decisions/
 .squad/casting/
 .squad/identity/
