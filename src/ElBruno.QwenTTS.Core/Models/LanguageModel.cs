@@ -204,8 +204,8 @@ internal sealed class LanguageModel : IDisposable
         var cpEmbedBuf = new float[_cpHiddenSize];
         var nextInputBuf = new float[_hiddenSize];
 
-        // CP input dimension: projected (cpHiddenSize) when projection exists, else full hiddenSize
-        int cpInputDim = _embeddings.HasCpProjection ? _cpHiddenSize : _hiddenSize;
+        // CP input dimension: use config-driven value when projection exists, else full hiddenSize
+        int cpInputDim = _embeddings.HasCpProjection ? _embeddings.CpModelHiddenSize : _hiddenSize;
 
         // Rent per-step buffers before loop
         var pooledMask = ArrayPool<long>.Shared.Rent(2048);

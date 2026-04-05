@@ -26,6 +26,7 @@ internal sealed class EmbeddingStore : IDisposable
     private readonly int _fc1OutSize;       // intermediate MLP size
     private readonly int _hiddenSize;       // talker hidden_size (1024 for 0.6B, 2048 for 1.7B)
     private readonly int _cpHiddenSize;     // CP embedding dim (1024 for both variants)
+    private readonly int _cpModelHiddenSize; // authoritative CP hidden_size from config.json (for ONNX input dim)
     
     public ModelConfig Config { get; }
 
@@ -40,6 +41,9 @@ internal sealed class EmbeddingStore : IDisposable
 
     /// <summary>Whether CP projection weights are loaded (true for 1.7B with re-exported code_predictor).</summary>
     public bool HasCpProjection => _cpProjectionWeight != null;
+
+    /// <summary>Authoritative Code Predictor model hidden_size from config.json (for ONNX input dim).</summary>
+    public int CpModelHiddenSize => _cpModelHiddenSize;
 
     public EmbeddingStore(string embeddingsDir, string configPath)
     {
@@ -78,6 +82,11 @@ internal sealed class EmbeddingStore : IDisposable
         _hiddenSize = _fc2Weight.GetLength(0);
         _cpHiddenSize = _cpCodecEmbeddings[0].GetLength(1);
 
+        // Authoritative CP hidden_size: prefer config.json, fall back to array-derived value
+        _cpModelHiddenSize = Config.code_predictor.hidden_size > 0
+            ? Config.code_predictor.hidden_size
+            : _cpHiddenSize;
+
         // Optional: load CP projection weights (only present for 1.7B with re-exported code_predictor)
         var projWeightPath = Path.Combine(embeddingsDir, "cp_projection_weight.npy");
         var projBiasPath = Path.Combine(embeddingsDir, "cp_projection_bias.npy");
@@ -85,6 +94,11 @@ internal sealed class EmbeddingStore : IDisposable
         {
             _cpProjectionWeight = NpyReader.ReadFloat2D(projWeightPath);
             _cpProjectionBias = NpyReader.ReadFloat1D(projBiasPath);
+
+            // Validate projection weight output dim matches bias length
+            if (_cpProjectionWeight.GetLength(0) != _cpProjectionBias.Length)
+                throw new InvalidDataException(
+                    $"CP projection dimension mismatch: weight rows ({_cpProjectionWeight.GetLength(0)}) != bias length ({_cpProjectionBias.Length})");
         }
     }
 
@@ -162,7 +176,8 @@ internal sealed class EmbeddingStore : IDisposable
             throw new InvalidOperationException("CP projection weights not loaded");
 
         MatMul(_cpProjectionWeight, input, output);
-        for (int i = 0; i < _cpHiddenSize; i++)
+        int outDim = _cpProjectionWeight.GetLength(0);
+        for (int i = 0; i < outDim; i++)
             output[i] += _cpProjectionBias[i];
     }
 
@@ -269,6 +284,7 @@ internal sealed class CodePredictorConfig
     public int num_key_value_heads { get; set; }
     public int head_dim { get; set; }
     public int vocab_size { get; set; }
+    public int hidden_size { get; set; }
 }
 
 internal sealed class TtsConfig
