@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.2-preview] - 2026-04-05
+
+### Fixed
+
+- **Squad Protected Branch Guard** — now allows essential config files (team.md, routing.md, ceremonies.md) on main without triggering protection rule violations
+- **GitHub Actions workflows** — configured all Squad release/preview/insider workflows with proper .NET build/test commands
+- **squad-promote.yml** — now uses .NET csproj version instead of package.json
+- **Node.js 24 compatibility** — added `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` environment variable to all 13 workflows
+- **Git tracking** — removed .squad/ runtime state files from main branch
+
 ## [1.2.1-preview] - 2026-04-05
 
 ### Fixed
