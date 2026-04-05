@@ -44,3 +44,12 @@ Thumbs.db
 .vs/
 *.user
 python/parity_outputs/
+
+# Squad runtime state (kept on dev branches only)
+.squad/agents/
+.squad/log/
+.squad/orchestration-log/
+.squad/decisions/
+.squad/casting/
+.squad/identity/
+.squad/skills/
