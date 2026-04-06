@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
@@ -210,6 +211,7 @@ internal sealed class LanguageModel : IDisposable
         // Rent per-step buffers before loop
         var pooledMask = ArrayPool<long>.Shared.Rent(2048);
         var pooledCpInputs = ArrayPool<float>.Shared.Rent(2 * cpInputDim);
+        Debug.Assert(pooledCpInputs.Length >= 2 * cpInputDim, "CP prefill buffer too small");
 
         try
         {
@@ -231,25 +233,23 @@ internal sealed class LanguageModel : IDisposable
                 // CP prefill: concat(hidden_states[:,-1,:], group0_embed)
                 if (_embeddings.HasCpProjection)
                 {
-                    // Project hidden state: _hiddenSize → _cpHiddenSize
+                    Debug.Assert(cpInputDim <= pooledCpInputs.Length / 2, "cpInputDim exceeds half buffer");
+                    
+                    // Project hidden state: _hiddenSize → cpInputDim
                     int hOffset = hiddenStates.Length - _hiddenSize;
                     var lastHidden = new ReadOnlySpan<float>(hiddenStates, hOffset, _hiddenSize);
-                    var projectedHidden = new Span<float>(pooledCpInputs, 0, _cpHiddenSize);
+                    var projectedHidden = new Span<float>(pooledCpInputs, 0, cpInputDim);
                     _embeddings.CpProjection(lastHidden, projectedHidden);
 
-                    // Project group0 embed: _hiddenSize → _cpHiddenSize
-                    var projectedGroup0 = new Span<float>(pooledCpInputs, _cpHiddenSize, _cpHiddenSize);
+                    // Project group0 embed: _hiddenSize → cpInputDim
+                    var projectedGroup0 = new Span<float>(pooledCpInputs, cpInputDim, cpInputDim);
                     _embeddings.CpProjection(group0EmbedBuf, projectedGroup0);
                 }
                 else
                 {
                     // No projection: copy full cpInputDim elements directly
                     int hOffset = hiddenStates.Length - _hiddenSize;
-                    for (int i = 0; i < cpInputDim; i++)
-                    {
-                        pooledCpInputs[i] = hiddenStates[hOffset + i];
-                        pooledCpInputs[cpInputDim + i] = group0EmbedBuf[i];
-                    }
+                    BuildCpPrefillDirect(pooledCpInputs, hiddenStates.AsSpan(), hOffset, group0EmbedBuf, cpInputDim);
                 }
 
                 var (cpPastKeys, cpPastValues) = InitCPKV();
@@ -263,6 +263,7 @@ internal sealed class LanguageModel : IDisposable
                     var flatCpEmbeds = ArrayPool<float>.Shared.Rent(flatCpSize);
                     try
                     {
+                        Debug.Assert(flatCpSize <= flatCpEmbeds.Length, "flatCpSize exceeds rented buffer");
                         Buffer.BlockCopy(pooledCpInputs, 0, flatCpEmbeds, 0, flatCpSize * sizeof(float));
                         
                         var cpInputsList = new List<NamedOnnxValue>
@@ -286,6 +287,7 @@ internal sealed class LanguageModel : IDisposable
                         // Next input
                         if (groupIdx < 15)
                         {
+                            Debug.Assert(cpInputDim <= pooledCpInputs.Length, "cpInputDim exceeds pooled buffer for next input");
                             _embeddings.CpCodecEmbedding(groupIdx - 1, cpToken, cpEmbedBuf);
                             // Zero-fill then copy: handles cpInputDim > _cpHiddenSize (old 1.7B compat)
                             for (int i = 0; i < cpInputDim; i++)
@@ -305,8 +307,7 @@ internal sealed class LanguageModel : IDisposable
                 for (int g = 1; g < 16; g++)
                 {
                     _embeddings.CpCodecEmbedding(g - 1, (int)codes[g], cpEmbedBuf);
-                    for (int i = 0; i < _cpHiddenSize; i++)
-                        nextInputBuf[i] += cpEmbedBuf[i];
+                    AccumulateCpEmbedding(nextInputBuf, cpEmbedBuf, _cpHiddenSize);
                 }
 
                 // Add trailing text hidden or tts_pad
@@ -657,6 +658,39 @@ internal sealed class LanguageModel : IDisposable
         {
             ArrayPool<float>.Shared.Return(probs);
         }
+    }
+
+    /// <summary>
+    /// Builds CP prefill buffer by copying hidden state and group0 embedding directly (no projection).
+    /// Buffer layout: [hidden[0..cpInputDim], group0[0..cpInputDim]]
+    /// </summary>
+    internal static void BuildCpPrefillDirect(
+        float[] buffer, ReadOnlySpan<float> hiddenStates, int hOffset,
+        ReadOnlySpan<float> group0Embed, int cpInputDim)
+    {
+        Debug.Assert(buffer.Length >= 2 * cpInputDim);
+        Debug.Assert(hiddenStates.Length >= hOffset + cpInputDim);
+        Debug.Assert(group0Embed.Length >= cpInputDim);
+        
+        for (int i = 0; i < cpInputDim; i++)
+        {
+            buffer[i] = hiddenStates[hOffset + i];
+            buffer[cpInputDim + i] = group0Embed[i];
+        }
+    }
+
+    /// <summary>
+    /// Accumulates a CP codec embedding into the next talker input buffer.
+    /// Only the first cpHiddenSize elements are accumulated (CP space may be smaller than talker space).
+    /// </summary>
+    internal static void AccumulateCpEmbedding(
+        float[] nextInputBuf, ReadOnlySpan<float> cpEmbed, int cpHiddenSize)
+    {
+        Debug.Assert(nextInputBuf.Length >= cpHiddenSize);
+        Debug.Assert(cpEmbed.Length >= cpHiddenSize);
+        
+        for (int i = 0; i < cpHiddenSize; i++)
+            nextInputBuf[i] += cpEmbed[i];
     }
 
     public void Dispose()

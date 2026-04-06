@@ -99,6 +99,11 @@ internal sealed class EmbeddingStore : IDisposable
             if (_cpProjectionWeight.GetLength(0) != _cpProjectionBias.Length)
                 throw new InvalidDataException(
                     $"CP projection dimension mismatch: weight rows ({_cpProjectionWeight.GetLength(0)}) != bias length ({_cpProjectionBias.Length})");
+
+            // Validate projection input dim matches talker hidden_size
+            if (_cpProjectionWeight.GetLength(1) != _hiddenSize)
+                throw new InvalidDataException(
+                    $"CP projection input mismatch: weight columns ({_cpProjectionWeight.GetLength(1)}) != hidden_size ({_hiddenSize})");
         }
     }
 
@@ -174,6 +179,13 @@ internal sealed class EmbeddingStore : IDisposable
     {
         if (_cpProjectionWeight == null || _cpProjectionBias == null)
             throw new InvalidOperationException("CP projection weights not loaded");
+
+        if (input.Length < _cpProjectionWeight.GetLength(1))
+            throw new ArgumentException(
+                $"CP projection input too short: got {input.Length}, need {_cpProjectionWeight.GetLength(1)}");
+        if (output.Length < _cpProjectionWeight.GetLength(0))
+            throw new ArgumentException(
+                $"CP projection output too short: got {output.Length}, need {_cpProjectionWeight.GetLength(0)}");
 
         MatMul(_cpProjectionWeight, input, output);
         int outDim = _cpProjectionWeight.GetLength(0);
