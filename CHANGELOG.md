@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.3-preview] - 2026-04-06
+
+### Fixed
+
+- **CP projection span dimension mismatch for 1.7B models** ([#29](https://github.com/elbruno/ElBruno.QwenTTS/issues/29))
+  - Span constructors in `LanguageModel.cs` now consistently use `cpInputDim` instead of `_cpHiddenSize`
+  - Added `Debug.Assert` guards at dimension boundaries (zero-cost in Release builds)
+  - Added CP projection input/output dimension validation in `EmbeddingStore.cs`
+
+### Added
+
+- Extracted `BuildCpPrefillDirect` and `AccumulateCpEmbedding` as testable internal static methods
+- 21 new parameterized dimension tests covering 0.6B, 1.7B, and mismatched-dimension configurations
+
 ## [1.2.2-preview] - 2026-04-05
 
 ### Fixed
