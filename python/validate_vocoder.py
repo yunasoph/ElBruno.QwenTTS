@@ -18,6 +18,29 @@ import torch
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Compatibility patches (same as export_vocoder.py)
+# ---------------------------------------------------------------------------
+import transformers.utils.generic as _tug
+_orig_check = _tug.check_model_inputs
+
+def _compat_check_model_inputs(func=None):
+    if func is None:
+        return _orig_check
+    return _orig_check(func)
+
+_tug.check_model_inputs = _compat_check_model_inputs
+
+from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS as _ROPE_FNS
+if "default" not in _ROPE_FNS:
+    def _compute_default_rope(config=None, device=None, **kwargs):
+        head_dim = getattr(config, "head_dim", None)
+        if head_dim is None:
+            head_dim = config.hidden_size // config.num_attention_heads
+        inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, head_dim, 2, dtype=torch.int64).float().to(device) / head_dim))
+        return inv_freq, 1.0
+    _ROPE_FNS["default"] = _compute_default_rope
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 TOKENIZER_REPO = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
@@ -29,11 +52,92 @@ UPSAMPLE_FACTOR = 1920
 
 
 # ---------------------------------------------------------------------------
+# VocoderOnnxWrapper (must match the wrapper used during export)
+# ---------------------------------------------------------------------------
+class VocoderOnnxWrapper(torch.nn.Module):
+    """ONNX-friendly wrapper that bypasses create_causal_mask for dynamic shapes.
+
+    Must be identical to the wrapper in export_vocoder.py so that PyTorch
+    reference output matches the ONNX graph structure.
+    """
+
+    def __init__(self, decoder):
+        super().__init__()
+        self.decoder = decoder
+        config = decoder.pre_transformer.config
+        self.sliding_window = getattr(config, "sliding_window", None) or 9999
+
+    def _make_sliding_window_mask(self, seq_len: int, device: torch.device):
+        pos = torch.arange(seq_len, device=device)
+        q_pos = pos.unsqueeze(1)
+        kv_pos = pos.unsqueeze(0)
+        diff = q_pos - kv_pos
+        mask = (diff >= 0) & (diff < self.sliding_window)
+        return mask.unsqueeze(0).unsqueeze(0)
+
+    def forward(self, codes):
+        hidden = self.decoder.quantizer.decode(codes)
+        hidden = self.decoder.pre_conv(hidden).transpose(1, 2)
+
+        transformer = self.decoder.pre_transformer
+        inputs_embeds = transformer.input_proj(hidden)
+
+        seq_len = inputs_embeds.shape[1]
+        device = inputs_embeds.device
+        position_ids = torch.arange(seq_len, device=device).unsqueeze(0)
+        position_embeddings = transformer.rotary_emb(inputs_embeds, position_ids)
+
+        attn_mask = self._make_sliding_window_mask(seq_len, device)
+
+        hidden_states = inputs_embeds
+        for layer in transformer.layers[: transformer.config.num_hidden_layers]:
+            hidden_states = layer(
+                hidden_states,
+                attention_mask=attn_mask,
+                position_ids=position_ids,
+                past_key_values=None,
+                use_cache=False,
+                cache_position=None,
+                position_embeddings=position_embeddings,
+            )
+
+        hidden_states = transformer.norm(hidden_states)
+        hidden_states = transformer.output_proj(hidden_states)
+
+        hidden = hidden_states.permute(0, 2, 1)
+        for blocks in self.decoder.upsample:
+            for block in blocks:
+                hidden = block(hidden)
+        wav = hidden
+        for block in self.decoder.decoder:
+            wav = block(wav)
+        return wav.clamp(min=-1, max=1)
+
+
+# ---------------------------------------------------------------------------
+# RoPE inv_freq fix
+# ---------------------------------------------------------------------------
+def _fix_rope_inv_freq(decoder):
+    """Recompute correct RoPE inv_freq (non-persistent buffer gets garbage
+    after meta-device loading in from_pretrained)."""
+    rotary = decoder.pre_transformer.rotary_emb
+    config = decoder.pre_transformer.config
+    head_dim = getattr(config, "head_dim", None)
+    if head_dim is None:
+        head_dim = config.hidden_size // config.num_attention_heads
+    theta = config.rope_theta
+    inv_freq = 1.0 / (theta ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim))
+    rotary.inv_freq = inv_freq
+    print(f"  Fixed RoPE inv_freq: shape={inv_freq.shape}, "
+          f"range=[{inv_freq.min():.6f}, {inv_freq.max():.6f}]")
+
+
+# ---------------------------------------------------------------------------
 # Model loading
 # ---------------------------------------------------------------------------
 def load_models(local_dir: str | None = None):
-    """Load both the PyTorch decoder and the ONNX Runtime session."""
-    from transformers import AutoModel
+    """Load both the PyTorch decoder (wrapped) and the ONNX Runtime session."""
+    from qwen_tts.core import Qwen3TTSTokenizerV2Model, Qwen3TTSTokenizerV2Config
     import onnxruntime as ort
 
     if not ONNX_PATH.exists():
@@ -43,16 +147,24 @@ def load_models(local_dir: str | None = None):
 
     repo = local_dir or TOKENIZER_REPO
     print(f"Loading PyTorch model from {repo} ...")
-    model = AutoModel.from_pretrained(repo, trust_remote_code=True)
+    config = Qwen3TTSTokenizerV2Config.from_pretrained(repo)
+    model = Qwen3TTSTokenizerV2Model.from_pretrained(repo, config=config)
     decoder = model.decoder
     decoder.eval()
+
+    # Fix non-persistent RoPE inv_freq (garbage after meta-device loading)
+    _fix_rope_inv_freq(decoder)
+
+    # Use the same wrapper that was used during ONNX export
+    wrapper = VocoderOnnxWrapper(decoder)
+    wrapper.eval()
 
     print(f"Loading ONNX model from {ONNX_PATH} ...")
     session = ort.InferenceSession(
         str(ONNX_PATH), providers=["CPUExecutionProvider"]
     )
 
-    return decoder, session
+    return wrapper, session
 
 
 # ---------------------------------------------------------------------------
