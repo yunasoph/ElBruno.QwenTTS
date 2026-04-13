@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.4.1] - 2026-04-13
+
+### Fixed
+
+- **Python ONNX export compatibility for language models** ([#34](https://github.com/elbruno/ElBruno.QwenTTS/issues/34))
+  - Added 7 missing compatibility patches to `export_lm.py` that were already present in `export_embeddings.py` and `export_vocoder.py`
+  - Resolves `RuntimeError: invalid unordered_map<K, T> key` when exporting with official Qwen repository model IDs
+  - Centralized transformers/PyTorch compatibility patches in `python/compat_patches.py` for all export scripts
+
+### Added
+
+- **Python module improvements**
+  - `python/compat_patches.py` — centralized shared compatibility patch module used by all export scripts
+  - `python/requirements.txt` — pinned Python dependency versions (transformers, torch, onnx, onnxruntime)
+  - `python/export_utils.py` — shared model directory validation utilities with helpful error messages
+  - 62 Python unit tests for export validation (`python/tests/`)
+  - Model directory validation in all export scripts with user-friendly error messages
+
+### Improved
+
+- `python/export_embeddings.py` now uses centralized compat patches from `compat_patches.py`
+- `python/README.md` — enhanced with troubleshooting section and supported model sources documentation
+
 ## [v1.4.0] - 2026-07-25
 
 ### Added
