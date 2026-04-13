@@ -30,6 +30,19 @@
 
 **Environment:** `python/` directory created with requirements.txt, download_models.py, README.md, ARCHITECTURE.md
 
+### 2026-04-13: Issue #34 Resolution — Issue #34 Export Compat Patches (consolidated)
+
+📌 **Team update (2026-04-13T11:23Z):** Morpheus architected fix, Trinity implemented centralized compat_patches.py module with 7 patches applied to export_lm.py and export_embeddings.py. Tank created 62 Python tests for validation. Switch restructured commits, verified all 249 .NET tests pass. Cypher released v1.4.1. Issue #34 closed, PR #35 squash-merged.
+
+**What was done:**
+- Created `python/compat_patches.py` centralizing all 7 compatibility patches (vmap masking, ROPE init, torch.diff, bool cumsum, use_gqa_in_sdpa, sdpa_mask checks)
+- Updated `python/export_lm.py` to import compat_patches, use sdpa_without_vmap instead of eager mode, and added model-dir validation
+- Updated `python/export_embeddings.py` with compat_patches and validation
+- Created `python/requirements.txt` pinning transformers 5.5.0, torch 2.5.1
+- Added troubleshooting section to `python/README.md`
+
+**Why:** The official Qwen HuggingFace repos contain custom autograd functions that don't trace cleanly through `torch.onnx.export()` without the vmap/ROPE/torch.diff patches. Users hitting `RuntimeError: invalid unordered_map key` can now use official repos with all patches applied, or our elbruno/ forks (recommended).
+
 ### 2026-02-21: Talker LM + Code Predictor ONNX Export Scripts
 
 Created `python/export_lm.py` and `python/export_embeddings.py` for the two autoregressive components.
