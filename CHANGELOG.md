@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.4.3] - 2026-04-15
+
+### Fixed
+
+- **Python export scripts Unicode encoding error on non-UTF-8 terminals** ([#39](https://github.com/elbruno/ElBruno.QwenTTS/issues/39))
+  - Added `configure_output_encoding()` to `python/export_utils.py` that reconfigures stdout/stderr to UTF-8 with `errors='replace'`
+  - Applied to all 10 Python export/download/validation scripts
+  - Fixes `UnicodeEncodeError: 'gbk' codec can't encode character` on Windows systems with non-UTF-8 terminal encodings
+
 ## [v1.4.2] - 2026-04-14
 
 ### Fixed
