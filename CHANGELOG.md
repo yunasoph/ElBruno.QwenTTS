@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-04-16
+
+### Changed
+
+- Refactored `VoiceCloningDownloader` to use the `ElBruno.HuggingFace.Downloader` package, replacing hand-rolled `HttpClient` download logic with the shared package used by `ModelDownloader` (#44)
+  - Files split into `RequiredFiles` and `OptionalFiles` — missing HuggingFace uploads no longer crash downloads
+  - Removed band-aid 404 try/catch from v1.4.4; replaced with proper optional file handling
+  - Added `ElBruno.HuggingFace.Downloader` v0.5.0 package reference to VoiceCloning project
+
 ## [1.4.4] - 2026-04-16
 
 ### Fixed
