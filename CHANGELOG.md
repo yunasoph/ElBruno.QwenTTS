@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-04-16
+
+### Fixed
+
+- Fixed NuGet publishing workflow to include `ElBruno.QwenTTS.VoiceCloning` package — previously only the Core package was packed and published (#46, #47)
+- Added NuGet version badge for VoiceCloning package in README
+
 ## [1.4.5] - 2026-04-16
 
 ### Changed
