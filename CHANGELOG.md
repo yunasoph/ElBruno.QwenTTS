@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-04-16
+
+### Fixed
+
+- Added `torch.cdist` ONNX-safe replacement patch to `compat_patches.py` and `export_speech_tokenizer.py` to fix assertion error during speech tokenizer ONNX export (#42)
+- Added resilient HTTP 404 handling in `VoiceCloningDownloader` — missing HuggingFace files are now skipped with a warning instead of crashing the download (#41)
+
 ## [v1.4.3] - 2026-04-15
 
 ### Fixed
