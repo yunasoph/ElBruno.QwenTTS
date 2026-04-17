@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-04-17
+
+### Fixed
+
+- Fixed `check_model_inputs` compat patch to be a no-op (identity decorator) instead of delegating to the original decorator, which in newer transformers versions rejects valid kwargs like `inputs_embeds` during ONNX export (#48)
+- Updated in `compat_patches.py` and all inline copies (`export_vocoder.py`, `export_speech_tokenizer.py`, `validate_vocoder.py`)
+
 ## [1.4.6] - 2026-04-16
 
 ### Fixed
