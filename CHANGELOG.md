@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-05-02
+
+### Fixed
+- Clarified M-RoPE position_ids dimension in documentation (fixes #51)
+- Updated ARCHITECTURE.md with M-RoPE spatial axes explanation
+
+### Added
+- Roadmap: Streaming TTS support planned for v2.0 (see #50 for discussion)
+
+### Documentation
+- Enhanced position_ids dimension explanation in LanguageModel.cs
+
 ## [1.4.7] - 2026-04-17
 
 ### Fixed
