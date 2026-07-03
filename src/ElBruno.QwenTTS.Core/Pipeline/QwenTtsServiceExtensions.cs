@@ -36,7 +36,8 @@ public static class QwenTtsServiceExtensions
                 repoId: options.HuggingFaceRepo,
                 sessionOptionsFactory: factory,
                 vocoderSessionOptionsFactory: vocoderFactory,
-                variant: options.ModelVariant
+                variant: options.ModelVariant,
+                maxConcurrency: options.MaxConcurrency
             ).GetAwaiter().GetResult();
         });
 
@@ -66,7 +67,8 @@ public static class QwenTtsServiceExtensions
                 repoId: options.HuggingFaceRepo,
                 variant: options.ModelVariant,
                 sessionOptionsFactory: factory,
-                vocoderSessionOptionsFactory: vocoderFactory));
+                vocoderSessionOptionsFactory: vocoderFactory,
+                maxConcurrency: options.MaxConcurrency));
 
         return services;
     }

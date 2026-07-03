@@ -43,4 +43,10 @@ public class QwenTtsOptions
     /// Use this for advanced scenarios not covered by the enum.
     /// </summary>
     public Func<Microsoft.ML.OnnxRuntime.SessionOptions>? SessionOptionsFactory { get; set; }
+
+    /// <summary>
+    /// Maximum number of synthesis requests allowed to run concurrently per pipeline instance.
+    /// Default: 1.
+    /// </summary>
+    public int MaxConcurrency { get; set; } = 1;
 }

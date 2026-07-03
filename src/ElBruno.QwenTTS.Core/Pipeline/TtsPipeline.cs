@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.ML.OnnxRuntime;
 using ElBruno.QwenTTS.Audio;
 using ElBruno.QwenTTS.Models;
@@ -14,6 +15,7 @@ public sealed class TtsPipeline : ITtsPipeline
     private readonly Vocoder _vocoder;
     private readonly EmbeddingStore _embeddings;
     private readonly QwenModelVariant _variant;
+    private readonly TtsConcurrencyGate _concurrencyGate;
 
     /// <summary>
     /// Creates a TtsPipeline from a local model directory.
@@ -22,13 +24,15 @@ public sealed class TtsPipeline : ITtsPipeline
     /// <param name="sessionOptionsFactory">Optional factory for ONNX Runtime session options (e.g., for GPU acceleration). When null, uses CPU with max optimization.</param>
     /// <param name="vocoderSessionOptionsFactory">Optional separate factory for the vocoder model. Useful when GPU EP doesn't support vocoder ops (e.g., DirectML). When null, uses sessionOptionsFactory.</param>
     /// <param name="variant">Model size variant. Used to determine feature support (e.g., instruction control).</param>
-    public TtsPipeline(string modelDir, Func<SessionOptions>? sessionOptionsFactory = null, Func<SessionOptions>? vocoderSessionOptionsFactory = null, QwenModelVariant variant = QwenModelVariant.Qwen06B)
+    /// <param name="maxConcurrency">Maximum number of synthesis requests allowed to run concurrently per pipeline instance.</param>
+    public TtsPipeline(string modelDir, Func<SessionOptions>? sessionOptionsFactory = null, Func<SessionOptions>? vocoderSessionOptionsFactory = null, QwenModelVariant variant = QwenModelVariant.Qwen06B, int maxConcurrency = 1)
     {
         var tokenizerDir = Path.Combine(modelDir, "tokenizer");
         var embeddingsDir = Path.Combine(modelDir, "embeddings");
         var configPath = Path.Combine(embeddingsDir, "config.json");
 
         _variant = variant;
+        _concurrencyGate = new TtsConcurrencyGate(maxConcurrency);
         _tokenizer = new TextTokenizer(tokenizerDir);
         _embeddings = new EmbeddingStore(embeddingsDir, configPath);
         _languageModel = new LanguageModel(modelDir, _embeddings, sessionOptionsFactory);
@@ -40,6 +44,9 @@ public sealed class TtsPipeline : ITtsPipeline
 
     /// <summary>The model variant this pipeline was created with.</summary>
     public QwenModelVariant ModelVariant => _variant;
+
+    /// <summary>Maximum concurrent synthesis requests allowed for this pipeline instance.</summary>
+    public int MaxConcurrency => _concurrencyGate.MaxConcurrency;
 
     /// <summary>
     /// Synthesizes speech from text and saves the output to a WAV file.
@@ -56,6 +63,21 @@ public sealed class TtsPipeline : ITtsPipeline
                                      string language = "auto", string? instruct = null,
                                      IProgress<string>? progress = null)
     {
+        _ = await SynthesizeWithMetricsAsync(text, speaker, outputPath, language, instruct, progress);
+    }
+
+    /// <summary>
+    /// Synthesizes speech from text, saves the output to a WAV file, and returns timing metrics.
+    /// </summary>
+    public async Task<TtsSynthesisMetrics> SynthesizeWithMetricsAsync(
+        string text,
+        string speaker,
+        string outputPath,
+        string language = "auto",
+        string? instruct = null,
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
         // Input validation
         ArgumentNullException.ThrowIfNull(text);
         if (text.Length == 0)
@@ -63,10 +85,14 @@ public sealed class TtsPipeline : ITtsPipeline
         if (text.Length > 10000)
             throw new ArgumentException("Text exceeds maximum length of 10,000 characters.", nameof(text));
 
+        using var lease = await _concurrencyGate.EnterAsync(cancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+        cancellationToken.ThrowIfCancellationRequested();
+
         // Variant-aware instruct handling: 0.6B does not support instruction control
         if (!string.IsNullOrEmpty(instruct) && !QwenModelVariantConfig.SupportsInstruct(_variant))
         {
-            var warning = $"Warning: Instruction text ignored \u2014 {_variant} model does not support instruction control. Use 1.7B for style instructions.";
+            var warning = $"Warning: Instruction text ignored - {_variant} model does not support instruction control. Use 1.7B for style instructions.";
             progress?.Report(warning);
             Console.WriteLine(warning);
             instruct = null;
@@ -80,7 +106,7 @@ public sealed class TtsPipeline : ITtsPipeline
 
         // Generate audio codes via LM
         progress?.Report("Running language model inference...");
-        var codes = _languageModel.Generate(tokenIds, speaker, language);
+        var codes = _languageModel.Generate(tokenIds, speaker, language, cancellationToken: cancellationToken);
         
         int timesteps = codes.GetLength(2);
         progress?.Report($"Generated {timesteps} audio frames");
@@ -88,15 +114,32 @@ public sealed class TtsPipeline : ITtsPipeline
 
         // Decode to waveform via vocoder
         progress?.Report("Decoding waveform via vocoder...");
-        var waveform = _vocoder.Decode(codes);
+        var waveform = _vocoder.Decode(codes, cancellationToken);
+        var firstAudioLatency = stopwatch.Elapsed;
 
         // Write WAV file
         progress?.Report("Writing WAV file...");
-        await Task.Run(() => WavWriter.Write(outputPath, waveform, sampleRate: 24000));
+        cancellationToken.ThrowIfCancellationRequested();
+        await Task.Run(() => WavWriter.Write(outputPath, waveform, sampleRate: 24000), cancellationToken);
 
         var duration = waveform.Length / 24000.0;
-        progress?.Report($"Saved {Path.GetFileName(outputPath)} ({waveform.Length} samples, {duration:F2}s)");
-        Console.WriteLine($"Saved {outputPath} ({waveform.Length} samples, {duration:F2}s)");
+        var metrics = new TtsSynthesisMetrics
+        {
+            QueueLatency = lease.QueueLatency,
+            FirstAudioLatency = firstAudioLatency,
+            TotalLatency = stopwatch.Elapsed,
+            GeneratedFrames = timesteps,
+            OutputSamples = waveform.Length
+        };
+
+        progress?.Report(
+            $"Saved {Path.GetFileName(outputPath)} ({waveform.Length} samples, {duration:F2}s) " +
+            $"[queue {metrics.QueueLatency.TotalSeconds:F2}s, first audio {metrics.FirstAudioLatency.TotalSeconds:F2}s, total {metrics.TotalLatency.TotalSeconds:F2}s]");
+        Console.WriteLine(
+            $"Saved {outputPath} ({waveform.Length} samples, {duration:F2}s) " +
+            $"[queue {metrics.QueueLatency.TotalSeconds:F2}s, first audio {metrics.FirstAudioLatency.TotalSeconds:F2}s, total {metrics.TotalLatency.TotalSeconds:F2}s]");
+
+        return metrics;
     }
 
     /// <summary>
@@ -124,6 +167,7 @@ public sealed class TtsPipeline : ITtsPipeline
     /// <param name="sessionOptionsFactory">Optional factory for ONNX Runtime session options (e.g., for GPU acceleration).</param>
     /// <param name="vocoderSessionOptionsFactory">Optional separate factory for the vocoder model (e.g., CPU fallback for DirectML).</param>
     /// <param name="variant">Model size variant. Defaults to 0.6B for backward compatibility.</param>
+    /// <param name="maxConcurrency">Maximum number of synthesis requests allowed to run concurrently per pipeline instance.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     public static async Task<TtsPipeline> CreateAsync(
         string? modelDir = null,
@@ -132,8 +176,10 @@ public sealed class TtsPipeline : ITtsPipeline
         Func<SessionOptions>? sessionOptionsFactory = null,
         Func<SessionOptions>? vocoderSessionOptionsFactory = null,
         QwenModelVariant variant = QwenModelVariant.Qwen06B,
+        int maxConcurrency = 1,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var (resolvedDir, resolvedRepo) = ModelDownloader.ResolveForVariant(variant, modelDir, repoId);
 
         if (!ModelDownloader.IsModelDownloaded(resolvedDir, variant))
@@ -145,12 +191,21 @@ public sealed class TtsPipeline : ITtsPipeline
             await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken, variant);
             progress?.Report("Model download complete.");
         }
-        return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant, maxConcurrency);
     }
 
     /// <summary>
     /// Creates a TtsPipeline with detailed download progress reporting.
     /// </summary>
+    /// <param name="modelDir">Directory to store/load model files. When null, uses the variant-specific default location.</param>
+    /// <param name="downloadProgress">Detailed byte-level model download progress callback.</param>
+    /// <param name="repoId">HuggingFace repository ID. When null with a variant, uses the variant's default repo.</param>
+    /// <param name="sessionOptionsFactory">Optional factory for ONNX Runtime session options (e.g., for GPU acceleration).</param>
+    /// <param name="vocoderSessionOptionsFactory">Optional separate factory for the vocoder model (e.g., CPU fallback for DirectML).</param>
+    /// <param name="variant">Model size variant. Defaults to 0.6B for backward compatibility.</param>
+    /// <param name="maxConcurrency">Maximum number of synthesis requests allowed to run concurrently per pipeline instance.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     public static async Task<TtsPipeline> CreateAsync(
         string? modelDir,
         IProgress<ModelDownloadProgress> downloadProgress,
@@ -158,17 +213,21 @@ public sealed class TtsPipeline : ITtsPipeline
         Func<SessionOptions>? sessionOptionsFactory = null,
         Func<SessionOptions>? vocoderSessionOptionsFactory = null,
         QwenModelVariant variant = QwenModelVariant.Qwen06B,
+        int maxConcurrency = 1,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var (resolvedDir, resolvedRepo) = ModelDownloader.ResolveForVariant(variant, modelDir, repoId);
 
         if (!ModelDownloader.IsModelDownloaded(resolvedDir, variant))
             await ModelDownloader.DownloadModelAsync(resolvedDir, resolvedRepo, downloadProgress, cancellationToken, variant);
-        return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new TtsPipeline(resolvedDir, sessionOptionsFactory, vocoderSessionOptionsFactory, variant, maxConcurrency);
     }
 
     public void Dispose()
     {
+        _concurrencyGate.Dispose();
         _tokenizer.Dispose();
         _embeddings.Dispose();
         _languageModel.Dispose();

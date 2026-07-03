@@ -44,6 +44,8 @@ await pipeline.SynthesizeAsync(
 
 > **Note:** Use `TtsPipeline.CreateAsync()` for automatic model management. Use `new TtsPipeline(modelDir)` only when you know the models are already present.
 
+> **Performance note:** Create one pipeline or client and reuse it. ONNX sessions now stay loaded for the lifetime of the pipeline, which avoids reloading model graphs on every request.
+
 ## API Reference
 
 ### `TtsPipeline`
@@ -61,6 +63,7 @@ public static async Task<TtsPipeline> CreateAsync(
     string modelDir,
     string repoId = ModelDownloader.DefaultRepoId,
     IProgress<string>? progress = null,
+    int maxConcurrency = 1,
     CancellationToken cancellationToken = default)
 ```
 
@@ -71,6 +74,7 @@ Creates a `TtsPipeline`, automatically downloading missing model files from Hugg
 | `modelDir` | `string` | Directory to store/load model files |
 | `repoId` | `string` | HuggingFace repo ID (default: `elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX`) |
 | `progress` | `IProgress<string>?` | Optional progress callback for download status |
+| `maxConcurrency` | `int` | Maximum number of concurrent syntheses allowed per shared pipeline instance |
 | `cancellationToken` | `CancellationToken` | Cancellation token |
 
 #### Constructor
@@ -127,6 +131,19 @@ public async Task SynthesizeAsync(
 | `language` | `string` | Language: `"english"`, `"spanish"`, `"chinese"`, `"japanese"`, `"korean"`, `"russian"`, or `"auto"` (default) |
 | `instruct` | `string?` | Optional voice style instruction (e.g., `"speak slowly and calmly"`) |
 | `progress` | `IProgress<string>?` | Optional progress callback for real-time status updates |
+
+```csharp
+public async Task<TtsSynthesisMetrics> SynthesizeWithMetricsAsync(
+    string text,
+    string speaker,
+    string outputPath,
+    string language = "auto",
+    string? instruct = null,
+    IProgress<string>? progress = null,
+    CancellationToken cancellationToken = default)
+```
+
+Returns queue latency, first-audio latency, total latency, generated frame count, and output sample count for the request.
 
 ```csharp
 public void Dispose()
@@ -186,6 +203,33 @@ public record ModelDownloadProgress(
     public double FilePercentage { get; }  // File-level 0-100
     public double BytePercentage { get; }  // Byte-level 0-100 for current file
 }
+```
+
+### `TextToSpeechResponse`
+
+The high-level `QwenTextToSpeechClient` returns a `TextToSpeechResponse` with audio bytes plus latency metadata:
+
+```csharp
+public sealed class TextToSpeechResponse
+{
+    public required byte[] AudioData { get; init; }
+    public string MediaType { get; init; }
+    public int SampleRate { get; init; }
+    public string ModelId { get; init; }
+    public TtsSynthesisMetrics Metrics { get; init; }
+}
+```
+
+### `QwenTtsOptions`
+
+DI registration accepts a `MaxConcurrency` setting:
+
+```csharp
+builder.Services.AddQwenTextToSpeechClient(options =>
+{
+    options.ModelVariant = QwenModelVariant.Qwen17B;
+    options.MaxConcurrency = 2;
+});
 ```
 
 ### Shared Model Directory
@@ -288,7 +332,7 @@ foreach (var speaker in pipeline.Speakers)
 
 ### ASP.NET / Blazor integration
 
-For web apps, register the pipeline as a singleton service with thread-safe access:
+For web apps, register the pipeline as a singleton service and let the shared pipeline manage bounded concurrency:
 
 ```csharp
 // Program.cs
@@ -298,26 +342,20 @@ builder.Services.AddSingleton<TtsPipelineService>();
 public class TtsPipelineService
 {
     private readonly TtsPipeline _pipeline;
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     public TtsPipelineService(IConfiguration config)
     {
         var modelDir = config["TTS:ModelDir"] ?? "python/onnx_runtime";
-        _pipeline = new TtsPipeline(modelDir);
+        _pipeline = new TtsPipeline(modelDir, maxConcurrency: 2);
     }
 
     public async Task<string> GenerateAsync(string text, string speaker,
         string language, string? instruct, IProgress<string>? progress)
     {
-        await _semaphore.WaitAsync();
-        try
-        {
-            var outputPath = Path.Combine("wwwroot/generated", $"{Guid.NewGuid()}.wav");
-            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-            await _pipeline.SynthesizeAsync(text, speaker, outputPath, language, instruct, progress);
-            return $"/generated/{Path.GetFileName(outputPath)}";
-        }
-        finally { _semaphore.Release(); }
+        var outputPath = Path.Combine("wwwroot/generated", $"{Guid.NewGuid()}.wav");
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        await _pipeline.SynthesizeAsync(text, speaker, outputPath, language, instruct, progress);
+        return $"/generated/{Path.GetFileName(outputPath)}";
     }
 }
 ```

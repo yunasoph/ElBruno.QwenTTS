@@ -27,6 +27,9 @@ Pre-exported ONNX models are hosted on HuggingFace:
 - **GPU Acceleration** — Optional CUDA or DirectML support via SessionOptions injection ([docs](docs/gpu-acceleration.md))
 - **Multi-Language** — English, Spanish, Chinese, Japanese, Korean, Russian
 - **Shared Model Cache** — Models stored once in `%LOCALAPPDATA%/ElBruno/QwenTTS`, shared across all apps
+- **Reusable Sessions** — ONNX sessions stay loaded and are reused across requests instead of being recreated
+- **Bounded Concurrency + Cancellation** — Configure max concurrent syntheses and cancel queued or in-flight requests at safe boundaries
+- **Latency Metrics** — Capture queue, first-audio, and total synthesis latency from the high-level client
 - **24 kHz WAV Output** — High-quality mono audio
 
 ---
@@ -52,6 +55,14 @@ await pipeline.SynthesizeAsync("Hello world!", "ryan", "hello.wav", "english");
 using var pipeline17 = await TtsPipeline.CreateAsync("models", variant: QwenModelVariant.Qwen17B);
 await pipeline17.SynthesizeAsync("Hello world!", "ryan", "hello.wav", "english",
     instruct: "speak with warmth and excitement");
+
+// Reuse a single pipeline and get per-request latency metrics
+using var sharedPipeline = await TtsPipeline.CreateAsync("models", maxConcurrency: 2);
+var metrics = await sharedPipeline.SynthesizeWithMetricsAsync(
+    "Two callers can queue behind the same shared pipeline.",
+    "serena",
+    "queued.wav");
+Console.WriteLine($"First audio: {metrics.FirstAudioLatency.TotalSeconds:F2}s");
 ```
 
 ### CLI

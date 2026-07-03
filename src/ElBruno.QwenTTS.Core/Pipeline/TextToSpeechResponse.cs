@@ -17,4 +17,7 @@ public sealed class TextToSpeechResponse
 
     /// <summary>Model identifier used for synthesis.</summary>
     public string ModelId { get; init; } = "qwen3-tts";
+
+    /// <summary>Timing and output metrics captured for the synthesis request.</summary>
+    public TtsSynthesisMetrics Metrics { get; init; } = new();
 }
