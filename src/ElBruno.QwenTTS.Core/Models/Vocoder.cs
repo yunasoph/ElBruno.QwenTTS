@@ -10,10 +10,9 @@ namespace ElBruno.QwenTTS.Models;
 /// </summary>
 internal sealed class Vocoder : IDisposable
 {
-    private InferenceSession? _session;
-    private string? _inputName;
     private readonly string _modelPath;
     private readonly Func<SessionOptions> _sessionOptionsFactory;
+    private readonly Lazy<VocoderSessionState> _sessionState;
 
     public int SampleRate => 24000;
 
@@ -29,6 +28,7 @@ internal sealed class Vocoder : IDisposable
     {
         _modelPath = modelPath;
         _sessionOptionsFactory = sessionOptionsFactory ?? CreateDefaultOptions;
+        _sessionState = new Lazy<VocoderSessionState>(CreateSessionState, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     private static SessionOptions CreateDefaultOptions() => new()
@@ -36,47 +36,50 @@ internal sealed class Vocoder : IDisposable
         GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL
     };
 
-    private InferenceSession GetSession()
+    private VocoderSessionState CreateSessionState()
     {
-        if (_session is null)
-        {
-            // SEC-3: File size pre-check to prevent out-of-memory attacks
-            // Raised to 8 GB for consistency with LanguageModel.cs (1.7B model support)
-            var fileInfo = new FileInfo(_modelPath);
-            const long maxOnnxSize = 8_000_000_000; // 8 GB
-            if (fileInfo.Length > maxOnnxSize)
-                throw new InvalidOperationException($"ONNX file too large ({fileInfo.Length / 1e9:F2} GB). Maximum allowed: {maxOnnxSize / 1e9:F2} GB.");
-            
-            _session = new InferenceSession(_modelPath, _sessionOptionsFactory());
-            _inputName = _session.InputMetadata.Keys.FirstOrDefault() ?? "codes";
-        }
-        return _session;
+        // SEC-3: File size pre-check to prevent out-of-memory attacks
+        // Raised to 8 GB for consistency with LanguageModel.cs (1.7B model support)
+        var fileInfo = new FileInfo(_modelPath);
+        const long maxOnnxSize = 8_000_000_000; // 8 GB
+        if (fileInfo.Length > maxOnnxSize)
+            throw new InvalidOperationException($"ONNX file too large ({fileInfo.Length / 1e9:F2} GB). Maximum allowed: {maxOnnxSize / 1e9:F2} GB.");
+
+        var session = new InferenceSession(_modelPath, _sessionOptionsFactory());
+        var inputName = session.InputMetadata.Keys.FirstOrDefault() ?? "codes";
+        return new VocoderSessionState(session, inputName);
     }
 
     /// <summary>
     /// Decode audio codes to waveform.
     /// </summary>
     /// <param name="codes">Audio codes of shape (1, 16, T) where T is the number of timesteps.</param>
+    /// <param name="cancellationToken">Cancellation token checked between flattening, inference, and output copy phases.</param>
     /// <returns>PCM waveform samples at 24 kHz, values in [-1, 1].</returns>
-    public float[] Decode(long[,,] codes)
+    public float[] Decode(long[,,] codes, CancellationToken cancellationToken = default)
     {
         int batch = codes.GetLength(0);      // 1
         int quantizers = codes.GetLength(1);  // 16
         int timesteps = codes.GetLength(2);   // T
+        var sessionState = _sessionState.Value;
 
         // Flatten 3D array into DenseTensor (row-major)
         var tensor = new DenseTensor<long>(new[] { batch, quantizers, timesteps });
         for (int b = 0; b < batch; b++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int q = 0; q < quantizers; q++)
                 for (int t = 0; t < timesteps; t++)
                     tensor[b, q, t] = codes[b, q, t];
+        }
 
         var inputs = new List<NamedOnnxValue>
         {
-            NamedOnnxValue.CreateFromTensor(_inputName ?? "codes", tensor)
+            NamedOnnxValue.CreateFromTensor(sessionState.InputName, tensor)
         };
 
-        using var results = GetSession().Run(inputs);
+        cancellationToken.ThrowIfCancellationRequested();
+        using var results = sessionState.Session.Run(inputs);
 
         // Extract waveform from first output tensor
         var outputTensor = results.First().AsTensor<float>();
@@ -96,13 +99,20 @@ internal sealed class Vocoder : IDisposable
         var waveform = new float[outputTensor.Length];
         int i = 0;
         foreach (var sample in outputTensor)
+        {
+            if ((i & 0xFFF) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
             waveform[i++] = sample;
+        }
 
         return waveform;
     }
 
     public void Dispose()
     {
-        _session?.Dispose();
+        if (_sessionState.IsValueCreated)
+            _sessionState.Value.Session.Dispose();
     }
+
+    private sealed record VocoderSessionState(InferenceSession Session, string InputName);
 }

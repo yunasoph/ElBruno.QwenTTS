@@ -10,10 +10,10 @@ namespace ElBruno.QwenTTS.Web.Services;
 public sealed class TtsPipelineService : IDisposable
 {
     private TtsPipeline? _pipeline;
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly string _outputDir;
     private readonly string _modelDir;
     private readonly QwenModelVariant _variant;
+    private readonly int _maxConcurrency;
     private bool _isInitializing;
     private bool _isReady;
 
@@ -43,6 +43,9 @@ public sealed class TtsPipelineService : IDisposable
         // Parse model variant from config
         var variantStr = config["TTS:Variant"];
         _variant = ParseVariant(variantStr);
+        _maxConcurrency = int.TryParse(config["TTS:MaxConcurrency"], out var parsedMaxConcurrency) && parsedMaxConcurrency > 0
+            ? parsedMaxConcurrency
+            : 1;
 
         var modelDir = config["TTS:ModelDir"];
         if (string.IsNullOrEmpty(modelDir))
@@ -87,7 +90,12 @@ public sealed class TtsPipelineService : IDisposable
         try
         {
             var progress = new Progress<ModelDownloadProgress>(p => OnDownloadProgress?.Invoke(p));
-            _pipeline = await TtsPipeline.CreateAsync(_modelDir, progress, variant: _variant, cancellationToken: cancellationToken);
+            _pipeline = await TtsPipeline.CreateAsync(
+                _modelDir,
+                progress,
+                variant: _variant,
+                maxConcurrency: _maxConcurrency,
+                cancellationToken: cancellationToken);
             _isReady = true;
             OnInitialized?.Invoke(true, null);
         }
@@ -119,7 +127,8 @@ public sealed class TtsPipelineService : IDisposable
     /// <exception cref="ArgumentNullException">Thrown when text is null.</exception>
     /// <exception cref="ArgumentException">Thrown when text is empty or exceeds 10,000 characters.</exception>
     public async Task<string> GenerateAsync(string text, string speaker, string language,
-                                            string? instruct, IProgress<string>? progress = null)
+                                            string? instruct, IProgress<string>? progress = null,
+                                            CancellationToken cancellationToken = default)
     {
         // Input validation
         ArgumentNullException.ThrowIfNull(text);
@@ -134,16 +143,7 @@ public sealed class TtsPipelineService : IDisposable
         var fileName = $"{Guid.NewGuid():N}.wav";
         var filePath = Path.Combine(_outputDir, fileName);
 
-        await _semaphore.WaitAsync();
-        try
-        {
-            await Task.Run(async () =>
-                await _pipeline!.SynthesizeAsync(text, speaker, filePath, language, instruct, progress));
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
+        await _pipeline!.SynthesizeWithMetricsAsync(text, speaker, filePath, language, instruct, progress, cancellationToken);
 
         return $"/generated/{fileName}";
     }
@@ -231,7 +231,6 @@ public sealed class TtsPipelineService : IDisposable
 
     public void Dispose()
     {
-        _semaphore.Dispose();
         _pipeline?.Dispose();
     }
 }

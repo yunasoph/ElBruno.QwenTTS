@@ -9,7 +9,7 @@ namespace ElBruno.QwenTTS.Pipeline;
 /// </summary>
 /// <remarks>
 /// The underlying <see cref="TtsPipeline"/> is lazily initialized on first use
-/// and safely shared across concurrent callers via <see cref="SemaphoreSlim"/>.
+/// and then reused across requests with bounded concurrency enforced by the pipeline instance.
 /// Models are automatically downloaded from HuggingFace if not present.
 /// </remarks>
 public sealed class QwenTextToSpeechClient : ITextToSpeechClient
@@ -21,6 +21,7 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
     private readonly QwenModelVariant _variant;
     private readonly Func<Microsoft.ML.OnnxRuntime.SessionOptions>? _sessionOptionsFactory;
     private readonly Func<Microsoft.ML.OnnxRuntime.SessionOptions>? _vocoderSessionOptionsFactory;
+    private readonly int _maxConcurrency;
 
     private TtsPipeline? _pipeline;
     private bool _disposed;
@@ -36,6 +37,7 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
     /// <param name="variant">Model size variant. Defaults to 0.6B.</param>
     /// <param name="sessionOptionsFactory">Optional ONNX Runtime session options factory (e.g., for GPU).</param>
     /// <param name="vocoderSessionOptionsFactory">Optional separate factory for the vocoder model.</param>
+    /// <param name="maxConcurrency">Maximum concurrent synthesis requests allowed for the shared pipeline instance.</param>
     public QwenTextToSpeechClient(
         string defaultVoice = "ryan",
         string defaultLanguage = "auto",
@@ -43,7 +45,8 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
         string? repoId = null,
         QwenModelVariant variant = QwenModelVariant.Qwen06B,
         Func<Microsoft.ML.OnnxRuntime.SessionOptions>? sessionOptionsFactory = null,
-        Func<Microsoft.ML.OnnxRuntime.SessionOptions>? vocoderSessionOptionsFactory = null)
+        Func<Microsoft.ML.OnnxRuntime.SessionOptions>? vocoderSessionOptionsFactory = null,
+        int maxConcurrency = 1)
     {
         _defaultVoice = defaultVoice;
         _defaultLanguage = defaultLanguage;
@@ -52,6 +55,7 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
         _variant = variant;
         _sessionOptionsFactory = sessionOptionsFactory;
         _vocoderSessionOptionsFactory = vocoderSessionOptionsFactory;
+        _maxConcurrency = maxConcurrency;
     }
 
     /// <inheritdoc />
@@ -68,12 +72,14 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
         var voice = options?.VoiceId ?? _defaultVoice;
         var language = options?.Language ?? _defaultLanguage;
         var instruct = options?.Instruct;
+        cancellationToken.ThrowIfCancellationRequested();
 
         // Write to temp file, read into memory, then clean up
         var tempPath = Path.Combine(Path.GetTempPath(), $"qwentts_{Guid.NewGuid():N}.wav");
         try
         {
-            await _pipeline!.SynthesizeAsync(text, voice, tempPath, language, instruct);
+            var metrics = await _pipeline!.SynthesizeWithMetricsAsync(
+                text, voice, tempPath, language, instruct, cancellationToken: cancellationToken);
             var audioData = await File.ReadAllBytesAsync(tempPath, cancellationToken);
 
             return new TextToSpeechResponse
@@ -82,6 +88,7 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
                 MediaType = "audio/wav",
                 SampleRate = 24000,
                 ModelId = options?.ModelId ?? "qwen3-tts",
+                Metrics = metrics,
             };
         }
         finally
@@ -133,6 +140,7 @@ public sealed class QwenTextToSpeechClient : ITextToSpeechClient
                 variant: _variant,
                 sessionOptionsFactory: _sessionOptionsFactory,
                 vocoderSessionOptionsFactory: _vocoderSessionOptionsFactory,
+                maxConcurrency: _maxConcurrency,
                 cancellationToken: cancellationToken);
         }
         finally

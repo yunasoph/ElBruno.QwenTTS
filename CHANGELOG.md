@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-03
+
+### Added
+- Reusable ONNX inference sessions for `TtsPipeline`, `LanguageModel`, and `Vocoder`, so repeated requests no longer recreate the same model sessions
+- `QwenTtsOptions.MaxConcurrency` and `TtsPipeline`/`QwenTextToSpeechClient` max-concurrency support for bounded shared-pipeline execution
+- `TtsSynthesisMetrics` surfaced from `QwenTextToSpeechClient` responses and `TtsPipeline.SynthesizeWithMetricsAsync()` for queue, first-audio, and total latency reporting
+
+### Fixed
+- `TtsPipeline.CreateAsync()` now honors an already-cancelled token even when the model files are already present locally
+- TTS synthesis now checks cancellation at safe boundaries through tokenization, talker/code-predictor loops, vocoder decode, and queued request admission
+
+### Documentation
+- Updated README and core library docs for reusable pipeline lifetime, concurrency controls, cancellation, and latency metrics
+
 ## [1.0.2] - 2026-05-20
 
 ### Added

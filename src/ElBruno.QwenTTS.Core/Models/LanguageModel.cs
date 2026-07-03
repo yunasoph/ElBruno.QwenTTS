@@ -12,12 +12,12 @@ namespace ElBruno.QwenTTS.Models;
 /// </summary>
 internal sealed class LanguageModel : IDisposable
 {
-    private InferenceSession? _prefillSession;
-    private InferenceSession? _decodeSession;
-    private InferenceSession? _cpSession;
     private readonly EmbeddingStore _embeddings;
     private readonly string _modelDir;
     private readonly Func<SessionOptions> _sessionOptionsFactory;
+    private readonly Lazy<InferenceSession> _prefillSession;
+    private readonly Lazy<InferenceSession> _decodeSession;
+    private readonly Lazy<InferenceSession> _cpSession;
 
     // Dimensions from config — set once after EmbeddingStore loads config.json
     private readonly int _hiddenSize;       // talker hidden_size (1024 for 0.6B, 2048 for 1.7B)
@@ -35,6 +35,9 @@ internal sealed class LanguageModel : IDisposable
         _embeddings = embeddings;
         _modelDir = modelDir;
         _sessionOptionsFactory = sessionOptionsFactory ?? CreateDefaultOptions;
+        _prefillSession = CreateSessionLazy("talker_prefill.onnx");
+        _decodeSession = CreateSessionLazy("talker_decode.onnx");
+        _cpSession = CreateSessionLazy("code_predictor.onnx");
 
         // Read dimensions from config.json (loaded by EmbeddingStore)
         var cfg = embeddings.Config;
@@ -59,49 +62,35 @@ internal sealed class LanguageModel : IDisposable
         EnableCpuMemArena = true
     };
 
-    private InferenceSession GetPrefillSession()
+    private Lazy<InferenceSession> CreateSessionLazy(string fileName) =>
+        new(() => CreateSession(fileName), LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private InferenceSession CreateSession(string fileName)
     {
         // SEC-3: File size pre-check to prevent out-of-memory attacks
-        var modelPath = Path.Combine(_modelDir, "talker_prefill.onnx");
+        var modelPath = Path.Combine(_modelDir, fileName);
         var fileInfo = new FileInfo(modelPath);
         const long maxOnnxSize = 8_000_000_000; // 8 GB (1.7B models are ~5.4 GB)
         if (fileInfo.Length > maxOnnxSize)
             throw new InvalidOperationException($"ONNX file too large ({fileInfo.Length / 1e9:F2} GB). Maximum allowed: {maxOnnxSize / 1e9:F2} GB.");
-        
-        return _prefillSession ??= new InferenceSession(modelPath, _sessionOptionsFactory());
+
+        return new InferenceSession(modelPath, _sessionOptionsFactory());
     }
 
-    private InferenceSession GetDecodeSession()
-    {
-        // SEC-3: File size pre-check to prevent out-of-memory attacks
-        var modelPath = Path.Combine(_modelDir, "talker_decode.onnx");
-        var fileInfo = new FileInfo(modelPath);
-        const long maxOnnxSize = 8_000_000_000; // 8 GB (1.7B models are ~5.4 GB)
-        if (fileInfo.Length > maxOnnxSize)
-            throw new InvalidOperationException($"ONNX file too large ({fileInfo.Length / 1e9:F2} GB). Maximum allowed: {maxOnnxSize / 1e9:F2} GB.");
-        
-        return _decodeSession ??= new InferenceSession(modelPath, _sessionOptionsFactory());
-    }
+    private InferenceSession GetPrefillSession() => _prefillSession.Value;
 
-    private InferenceSession GetCpSession()
-    {
-        // SEC-3: File size pre-check to prevent out-of-memory attacks
-        var modelPath = Path.Combine(_modelDir, "code_predictor.onnx");
-        var fileInfo = new FileInfo(modelPath);
-        const long maxOnnxSize = 8_000_000_000; // 8 GB (1.7B models are ~5.4 GB)
-        if (fileInfo.Length > maxOnnxSize)
-            throw new InvalidOperationException($"ONNX file too large ({fileInfo.Length / 1e9:F2} GB). Maximum allowed: {maxOnnxSize / 1e9:F2} GB.");
-        
-        return _cpSession ??= new InferenceSession(modelPath, _sessionOptionsFactory());
-    }
+    private InferenceSession GetDecodeSession() => _decodeSession.Value;
+
+    private InferenceSession GetCpSession() => _cpSession.Value;
 
     public long[,,] Generate(int[] tokenIds, string speaker, string language,
                              int maxNewTokens = 2048, float temperature = 0.9f,
                              int topK = 50, float topP = 1.0f,
-                             float repetitionPenalty = 1.05f)
+                             float repetitionPenalty = 1.05f,
+                             CancellationToken cancellationToken = default)
     {
         var speakerId = _embeddings.GetSpeakerId(speaker.ToLowerInvariant());
-        return GenerateWithSpeakerId(tokenIds, speakerId, language, maxNewTokens, temperature, topK, topP, repetitionPenalty);
+        return GenerateWithSpeakerId(tokenIds, speakerId, language, maxNewTokens, temperature, topK, topP, repetitionPenalty, cancellationToken);
     }
 
     /// <summary>
@@ -111,10 +100,12 @@ internal sealed class LanguageModel : IDisposable
     public long[,,] GenerateWithSpeakerId(int[] tokenIds, int speakerId, string language,
                              int maxNewTokens = 2048, float temperature = 0.9f,
                              int topK = 50, float topP = 1.0f,
-                             float repetitionPenalty = 1.05f)
+                             float repetitionPenalty = 1.05f,
+                             CancellationToken cancellationToken = default)
     {
         return GenerateInternal(tokenIds, speakerId, language, speakerEmbedding: null,
-            maxNewTokens, temperature, topK, topP, repetitionPenalty);
+            maxNewTokens, temperature, topK, topP, repetitionPenalty,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -125,10 +116,12 @@ internal sealed class LanguageModel : IDisposable
     public long[,,] GenerateWithSpeakerEmbedding(int[] tokenIds, float[] speakerEmbedding, string language,
                              int maxNewTokens = 2048, float temperature = 0.9f,
                              int topK = 50, float topP = 1.0f,
-                             float repetitionPenalty = 1.05f)
+                             float repetitionPenalty = 1.05f,
+                             CancellationToken cancellationToken = default)
     {
         return GenerateInternal(tokenIds, speakerId: -1, language, speakerEmbedding,
-            maxNewTokens, temperature, topK, topP, repetitionPenalty);
+            maxNewTokens, temperature, topK, topP, repetitionPenalty,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -147,16 +140,18 @@ internal sealed class LanguageModel : IDisposable
     /// <param name="topK">Top-k sampling parameter.</param>
     /// <param name="topP">Top-p (nucleus) sampling parameter.</param>
     /// <param name="repetitionPenalty">Repetition penalty factor.</param>
+    /// <param name="cancellationToken">Cancellation token checked at safe inference loop boundaries.</param>
     public long[,,] GenerateWithSpeakerEmbeddingAndRefText(
         int[] tokenIds, float[] speakerEmbedding, string language,
         int[]? refTokenIds = null, long[,,]? refAudioCodes = null,
         int maxNewTokens = 2048, float temperature = 0.9f,
         int topK = 50, float topP = 1.0f,
-        float repetitionPenalty = 1.05f)
+        float repetitionPenalty = 1.05f,
+        CancellationToken cancellationToken = default)
     {
         return GenerateInternal(tokenIds, speakerId: -1, language, speakerEmbedding,
             maxNewTokens, temperature, topK, topP, repetitionPenalty,
-            refTokenIds, refAudioCodes);
+            refTokenIds, refAudioCodes, cancellationToken);
     }
 
     private long[,,] GenerateInternal(int[] tokenIds, int speakerId, string language,
@@ -165,8 +160,10 @@ internal sealed class LanguageModel : IDisposable
                              int topK, float topP,
                              float repetitionPenalty,
                              int[]? refTokenIds = null,
-                             long[,,]? refAudioCodes = null)
+                             long[,,]? refAudioCodes = null,
+                             CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var cfg = _embeddings.Config;
         
         // Build prefill embedding
@@ -206,6 +203,7 @@ internal sealed class LanguageModel : IDisposable
             using var posOrt = OrtValue.CreateTensorValueFromMemory<long>(flatPosIds, [3, 1, prefillLen]);
 
             var inputNames = new[] { "inputs_embeds", "attention_mask", "position_ids" };
+            cancellationToken.ThrowIfCancellationRequested();
             using (var prefillOutputs = prefillSession.Run(new RunOptions(), inputNames,
                 new[] { embedsOrt, maskOrt, posOrt }, prefillSession.OutputNames))
             {
@@ -220,10 +218,6 @@ internal sealed class LanguageModel : IDisposable
             ArrayPool<long>.Shared.Return(flatMask);
             ArrayPool<long>.Shared.Return(flatPosIds);
         }
-
-        // Release prefill session to free memory before loading decode + CP sessions
-        _prefillSession?.Dispose();
-        _prefillSession = null;
 
         // Generation loop
         var generatedCodes = new List<long[]>();
@@ -254,6 +248,8 @@ internal sealed class LanguageModel : IDisposable
         {
             for (int step = 0; step < maxNewTokens; step++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 // Suppress EOS for min_new_tokens=2 (matching Python reference)
                 if (step < 2)
                 {
@@ -301,6 +297,7 @@ internal sealed class LanguageModel : IDisposable
 
                 for (int groupIdx = 1; groupIdx < 16; groupIdx++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int cpInputSeqLen = groupIdx == 1 ? 2 : 1;
                     int flatCpSize = cpInputSeqLen * cpInputDim;
                     
@@ -318,6 +315,7 @@ internal sealed class LanguageModel : IDisposable
                             NamedOnnxValue.CreateFromTensor("past_values", new DenseTensor<float>(cpPastValues, [_cpNumLayers, 1, _cpNumKvHeads, cpPastLen, _cpHeadDim]))
                         };
 
+                        cancellationToken.ThrowIfCancellationRequested();
                         using var cpOutputs = GetCpSession().Run(cpInputsList);
                         var cpLogits = cpOutputs.First(x => x.Name == "logits").AsEnumerable<float>().ToArray();
                         var cpToken = SampleTokenSimple(cpLogits, temperature);
@@ -396,6 +394,7 @@ internal sealed class LanguageModel : IDisposable
                     NamedOnnxValue.CreateFromTensor("past_values", new DenseTensor<float>(pastValues, [_numLayers, 1, _numKvHeads, prefillLen + step, _headDim]))
                 };
 
+                cancellationToken.ThrowIfCancellationRequested();
                 using var decodeOutputs = GetDecodeSession().Run(decodeInputs);
                 logits = decodeOutputs.First(x => x.Name == "logits").AsEnumerable<float>().ToArray();
                 hiddenStates = decodeOutputs.First(x => x.Name == "hidden_states").AsEnumerable<float>().ToArray();
@@ -879,8 +878,14 @@ internal sealed class LanguageModel : IDisposable
 
     public void Dispose()
     {
-        _prefillSession?.Dispose();
-        _decodeSession?.Dispose();
-        _cpSession?.Dispose();
+        DisposeSession(_prefillSession);
+        DisposeSession(_decodeSession);
+        DisposeSession(_cpSession);
+    }
+
+    private static void DisposeSession(Lazy<InferenceSession> session)
+    {
+        if (session.IsValueCreated)
+            session.Value.Dispose();
     }
 }

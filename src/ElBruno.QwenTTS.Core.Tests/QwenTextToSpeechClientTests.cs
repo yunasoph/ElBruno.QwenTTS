@@ -40,6 +40,13 @@ public class QwenTextToSpeechClientTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_AcceptsMaxConcurrency()
+    {
+        using var client = new QwenTextToSpeechClient(maxConcurrency: 2);
+        Assert.NotNull(client);
+    }
+
+    [Fact]
     public void Dispose_CanBeCalledMultipleTimes()
     {
         var client = new QwenTextToSpeechClient();
@@ -95,6 +102,10 @@ public class QwenTextToSpeechClientTests : IDisposable
         Assert.Equal("audio/wav", response.MediaType);
         Assert.Equal(24000, response.SampleRate);
         Assert.Equal("qwen3-tts", response.ModelId);
+        Assert.NotNull(response.Metrics);
+        Assert.Equal(TimeSpan.Zero, response.Metrics.QueueLatency);
+        Assert.Equal(TimeSpan.Zero, response.Metrics.FirstAudioLatency);
+        Assert.Equal(TimeSpan.Zero, response.Metrics.TotalLatency);
     }
 
     [Fact]
@@ -135,10 +146,18 @@ public class QwenTextToSpeechClientTests : IDisposable
         {
             opts.ModelPath = "/tmp/models";
             opts.ExecutionProvider = ExecutionProvider.Cpu;
+            opts.MaxConcurrency = 2;
         });
 
         var descriptor = Assert.Single(services, d => d.ServiceType == typeof(ITextToSpeechClient));
         Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+    }
+
+    [Fact]
+    public void QwenTtsOptions_MaxConcurrencyDefaultsToOne()
+    {
+        var options = new QwenTtsOptions();
+        Assert.Equal(1, options.MaxConcurrency);
     }
 
     public void Dispose()
