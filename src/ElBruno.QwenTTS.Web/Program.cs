@@ -7,6 +7,10 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+// ADDED THIS: So the app knows to use our TtsController.cs file!
+builder.Services.AddControllers(); 
+
 builder.Services.AddSignalR(options =>
 {
     // Allow large JS interop messages (recorded audio returned as base64)
@@ -14,6 +18,7 @@ builder.Services.AddSignalR(options =>
 });
 builder.Services.AddSingleton<TtsPipelineService>();
 builder.Services.AddSingleton<VoiceClonePipelineService>();
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(builder =>
@@ -21,7 +26,11 @@ builder.Services.AddCors(options =>
         builder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
     });
 });
+
 var app = builder.Build();
+
+// ADDED THIS: This allows Lovable to talk to your server without browser security errors
+app.UseCors(); 
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
@@ -31,8 +40,6 @@ if (!app.Environment.IsDevelopment())
 app.UseAntiforgery();
 
 // Serve runtime-generated files (WAV audio, references) via dedicated static file providers.
-// These are created at runtime and not in the compile-time manifest, so they must be
-// served by UseStaticFiles before MapStaticAssets to avoid manifest warnings.
 var webRootPath = app.Environment.WebRootPath;
 var generatedDir = Path.Combine(webRootPath, "generated");
 var referencesDir = Path.Combine(webRootPath, "references");
@@ -51,6 +58,10 @@ app.UseStaticFiles(new StaticFileOptions
 });
 
 app.MapStaticAssets();
+
+// ADDED THIS: This tells the app to actually turn on our API routes!
+app.MapControllers(); 
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
